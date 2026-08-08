@@ -1,0 +1,48 @@
+# --- Ren'Py ---
+/game/saves
+/game/cache
+/game/**/*.rpyc
+/game/**/*.rpymc
+/game/**/*.bak
+/game/**/*.new
+/game/**/*.old
+
+# Ren'Py error/log/output files
+/errors.txt
+/files.txt
+/image_cache.txt
+/log.txt
+/save_dump.txt
+/traceback.txt
+
+# Ren'Py launcher
+/dialogue.tab
+/dialogue.txt
+/strings.json
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+.venv/
+venv/
+
+# --- API ---
+/api/.env
+
+# --- Docker ---
+docker-compose.override.yml
+
+# --- IDE ---
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+desktop.ini
