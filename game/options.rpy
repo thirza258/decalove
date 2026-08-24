@@ -12,7 +12,7 @@
 ##
 ## The _() surrounding the string marks it as eligible for translation.
 
-define config.name = _("decalove")
+define config.name = _("Decalove")
 
 
 ## Determines if the title given above is shown on the main menu screen. Set
@@ -30,6 +30,10 @@ define config.version = "1.0"
 ## triple-quotes, and leave a blank line between paragraphs.
 
 define gui.about = _p("""
+Decalove -- a visual novel where the story is written for you, not just played by you.
+
+The scenes you read are directed by an AI story engine running behind this client.
+It needs the Decalove API to be running; see api/README.md.
 """)
 
 

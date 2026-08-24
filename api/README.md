@@ -1,81 +1,111 @@
-# Decalove API — Visual Novel Game Backend
+# Decalove API — AI story engine
 
-FastAPI backend for an AI-agent-driven visual novel game, with MongoDB for data and MinIO (S3-compatible) for image storage.
+FastAPI backend for an AI-directed visual novel. The LLM writes the narrative; **this
+service owns the state** (PRD §33).
 
-## Architecture
+Runs with no API key, no MongoDB and no MinIO — each of those is a seam with a working
+offline implementation, and `/health` tells you which one is live.
 
-```
-┌──────────────┐       ┌──────────────┐       ┌──────────────┐
-│   Game Client │◄─────►│   FastAPI    │◄─────►│   MongoDB    │
-│  (Frontend)   │       │  (Backend)   │       │   (Data)     │
-└──────────────┘       └──────┬───────┘       └──────────────┘
-                              │
-                       ┌──────▼───────┐
-                       │    MinIO      │
-                       │  (Images)     │
-                       └──────────────┘
-```
-
-## Quick Start
-
-### 1. Start infrastructure services
+## Quick start
 
 ```bash
-docker compose up -d
+python3 -m venv .venv
+.venv/bin/pip install -r requirements-dev.txt
+.venv/bin/uvicorn app.main:app --reload --port 8000
 ```
 
-This starts:
-- **MongoDB 7** on port `27017`
-- **MinIO** on port `9000` (API) and `9001` (Console UI)
+* Swagger: <http://localhost:8000/docs>
+* Health:  <http://localhost:8000/health>
 
-### 2. Install Python dependencies
+Or run everything in containers:
 
 ```bash
-pip install -r requirements.txt
+docker compose up -d                 # MongoDB, MinIO, and the API on :8000
+docker compose up -d mongodb minio   # infrastructure only
+docker compose logs -f api
 ```
 
-### 3. Run the API server
+The containerised API sets `STORAGE_BACKEND=mongo` and `ASSET_BACKEND=minio` on purpose:
+both services are on the compose network, and a container that silently fell back to
+in-memory storage would lose every save without saying so.
+
+Optional AI:
 
 ```bash
-uvicorn app.main:app --reload --port 8000
+cp .env.example .env          # then set OPENROUTER_API_KEY
 ```
 
-### 4. Open in browser
+## What resolves to what
 
-- **API docs (Swagger)**: http://localhost:8000/docs
-- **MinIO Console**: http://localhost:9001 (login: `minioadmin` / `minioadmin`)
-- **Health check**: http://localhost:8000/health
+| Seam | With infrastructure | Without |
+|---|---|---|
+| Narrative | OpenRouter, structured outputs | authored scripted narrator |
+| Intent parsing | OpenRouter | keyword parser |
+| Images | OpenRouter image models | deterministic placeholder PNGs (or off) |
+| Sessions | MongoDB | in-memory (lost on restart) |
+| Art storage | MinIO | `var/assets/` |
+| Memory embeddings | any OpenAI-compatible endpoint | hashed n-grams |
 
-## API Endpoints
+The offline column is not a stub set — it is what the game runs on until you configure
+otherwise, and it is what the test suite exercises.
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/health` | Health check |
-| `POST` | `/api/v1/seed` | Seed database with sample scene |
-| `POST` | `/api/v1/scenes` | Create a new scene |
-| `GET` | `/api/v1/scenes` | List all scenes |
-| `GET` | `/api/v1/scenes/{id}` | Get a specific scene |
-| `PUT` | `/api/v1/scenes/{id}` | Update a scene |
-| `DELETE` | `/api/v1/scenes/{id}` | Delete a scene |
-| `GET` | `/api/v1/scenes/{id}/full` | Get scene with resolved image URLs |
-| `POST` | `/api/v1/images/upload` | Upload an image to MinIO |
-| `GET` | `/api/v1/images/{id}` | Get image metadata |
-| `GET` | `/api/v1/images/{id}/view` | View/proxy the actual image |
+## Game API
 
-## Environment Variables
+| Method | Endpoint | |
+|---|---|---|
+| `GET` | `/health` | which backends resolved, and the state of the session collector |
+| `GET` | `/api/v1/worlds` | the authored world: cast, locations, palettes |
+| `POST` | `/api/v1/games` | new game → opening scene is ready immediately |
+| `GET` | `/api/v1/games` | list game ids |
+| `GET` | `/api/v1/games/{id}` | world state, character states, queue depth |
+| `GET` | `/api/v1/games/{id}/save` | PRD §27 save payload |
+| `DELETE` | `/api/v1/games/{id}` | delete a game |
+| `GET` | `/api/v1/games/{id}/steps/next` | next beat; `?wait_ms=` to long-poll |
+| `POST` | `/api/v1/games/{id}/actions` | free text → **202**, generates in background |
+| `POST` | `/api/v1/games/{id}/choices` | a VN choice → **202** |
+| `GET` | `/api/v1/assets/{id}` | generated image metadata |
+| `GET` | `/api/v1/assets/{id}/view` | raw image bytes |
 
-See [`.env`](.env) for all configurable settings. Key variables:
+Legacy authored-scene CRUD (`/scenes`, `/images`, `/seed`) predates the story engine and
+still requires MongoDB; it returns **503** when Mongo is down rather than a 500.
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MONGODB_URL` | `mongodb://root:rootpassword@localhost:27017` | MongoDB connection string |
-| `MINIO_ENDPOINT` | `localhost:9000` | MinIO server endpoint |
-| `MINIO_BUCKET_NAME` | `decalove-assets` | S3 bucket for game assets |
+### The playback contract
 
-## Data Models
+`GET /steps/next` returns one of four statuses, and the client's whole loop is answering them:
 
-### Scene
-Represents a visual novel scene with dialogue, background/character images, and player choices.
+```json
+{"status": "ready",           "step": { ... }, "queue_depth": 3}
+{"status": "pending",         "ambience": ["The wind moves through the fence."]}
+{"status": "awaiting_player", "step": { ...a choice or prompt... }}
+{"status": "ended"}
+```
 
-### GeneratedImage
-Tracks images stored in MinIO with metadata (type, size, presigned URL).
+`pending` means a batch is in flight. The client plays an ambient line — never a spinner.
+
+## Layout
+
+```
+app/
+  domain/       step schema, game state, memory, direction, validation results
+  content/      the authored world (High School Romance)
+  agents/       director (parse + plan), narrative, validator, visual, memory,
+                safety, ending (which ending was earned),
+                scripted (offline narrator + failure fallback)
+  llm/          provider protocols, OpenRouter, strict JSON Schema, embeddings
+  repositories/ Mongo + in-memory
+  assets/       MinIO + local filesystem, tiny PNG encoder
+  services/     game orchestration, background generation, asset lifecycle,
+                maintenance (garbage collection of abandoned saves)
+  routes/       HTTP
+  runtime.py    composition root - probes every dependency at startup
+tests/          425 tests; integration suites skip themselves without Docker
+```
+
+## Tests
+
+```bash
+.venv/bin/python -m pytest -q
+```
+
+See [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md) §6 for what each suite covers and why
+the LLM-path and Ren'Py-client suites exist.

@@ -32,6 +32,11 @@ venv/
 
 # --- API ---
 /api/.env
+# Generated art when the local asset store is in use
+/api/var/
+.pytest_cache/
+.coverage
+htmlcov/
 
 # --- Docker ---
 docker-compose.override.yml

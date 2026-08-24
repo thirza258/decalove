@@ -1,3 +1,15 @@
+## Decalove backend stack.
+##
+##   docker compose up -d                   full stack, API on :8000
+##   docker compose up -d mongodb minio     just the infrastructure, run the API locally
+##
+## The API is playable without either service -- it falls back to in-memory storage
+## and local asset files -- so this file is a convenience, not a prerequisite.
+
+# Without this the project would be named after the directory ("api"), which makes
+# the built image "api-api" and the network "api_default".
+name: decalove
+
 services:
   mongodb:
     image: mongo:7
@@ -9,22 +21,65 @@ services:
       MONGO_INITDB_ROOT_PASSWORD: rootpassword
     volumes:
       - mongodb_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
     restart: unless-stopped
 
   minio:
     image: minio/minio
     container_name: decalove-minio
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # console
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
     command: server /data --console-address ":9001"
     volumes:
       - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: decalove-api
+    container_name: decalove-api
+    ports:
+      - "8000:8000"
+    environment:
+      # Both are reachable by service name on the compose network, so require them
+      # rather than letting the API silently fall back to in-memory storage here --
+      # a container that quietly loses every save is worse than one that fails loudly.
+      STORAGE_BACKEND: mongo
+      ASSET_BACKEND: minio
+      MONGODB_URL: mongodb://root:rootpassword@mongodb:27017
+      MINIO_ENDPOINT: minio:9000
+      CORS_ORIGINS: '["*"]'
+      # Put OPENROUTER_API_KEY in a .env file next to this one to enable the LLM.
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      IMAGE_GENERATION_ENABLED: ${IMAGE_GENERATION_ENABLED:-False}
+    volumes:
+      # Only used if ASSET_BACKEND falls back to local.
+      - api_assets:/data/assets
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:
   mongodb_data:
   minio_data:
+  api_assets:

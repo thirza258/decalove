@@ -1,33 +1,96 @@
-﻿# The script of the game goes in this file.
+## Decalove -- entry point.
+##
+## This file is deliberately short. Ren'Py owns presentation; the story itself is
+## directed by the backend (PRD §20), and the playback loop lives in
+## game/decalove/50_player.rpy.
 
-# Declare characters used by this game. The color argument colorizes the
-# name of the character.
+image decalove_void = Solid("#0b0d14")
 
-define e = Character("Eileen")
+default decalove_player_name = "You"
+default decalove_player_pronouns = "they/them"
+default decalove_player_tone = "warm"
 
-
-# The game starts here.
 
 label start:
 
-    # Show a background. This uses a placeholder by default, but you can
-    # add a file (named either "bg room.png" or "bg room.jpg") to the
-    # images directory to show it.
+    scene decalove_void
 
-    scene bg room
+    python:
+        decalove_boot_ok = decalove_load_world()
 
-    # This shows a character sprite. A placeholder is used, but you can
-    # replace it by adding a file named "eileen happy.png" to the images
-    # directory.
+    if not decalove_boot_ok:
+        call screen decalove_offline(message=decalove_api.last_error or "No response from the story engine.")
+        return
 
-    show eileen happy
+    call decalove_intro
 
-    # These display lines of dialogue.
+    call decalove_setup
 
-    e "You've created a new Ren'Py game."
+    if not decalove_game_id:
+        call screen decalove_offline(message=decalove_api.last_error or "Could not start a new game.")
+        return
 
-    e "Once you add a story, pictures, and music, you can release it to the world!"
+    call decalove_play
 
-    # This ends the game.
+    return
+
+
+label decalove_intro:
+
+    "Six weeks into the school year, a transfer student walks into Class 2-B."
+
+    "Everyone else has already decided who they are."
+
+    "You haven't."
+
+    return
+
+
+## Character setup -- PRD §7.1 / §30.
+label decalove_setup:
+
+    python:
+        decalove_player_name = (
+            renpy.input(
+                "What should everyone call you?",
+                default="",
+                length=24,
+                exclude="{}[]",
+            ).strip()
+            or "You"
+        )
+
+    menu:
+
+        "Which pronouns should the story use for you?"
+
+        "she / her":
+            $ decalove_player_pronouns = "she/her"
+
+        "he / him":
+            $ decalove_player_pronouns = "he/him"
+
+        "they / them":
+            $ decalove_player_pronouns = "they/them"
+
+    menu:
+
+        "And what kind of second year do you want?"
+
+        "Warm. Funny. The quiet moments earned.":
+            $ decalove_player_tone = "warm"
+
+        "Sharper. Let things actually go wrong.":
+            $ decalove_player_tone = "dramatic"
+
+        "Slow. Mostly just people, talking.":
+            $ decalove_player_tone = "gentle"
+
+    python:
+        decalove_new_game(
+            decalove_player_name,
+            decalove_player_pronouns,
+            decalove_player_tone,
+        )
 
     return
