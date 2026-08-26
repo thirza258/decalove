@@ -30,6 +30,7 @@ from app.llm.base import ChatProvider, EmbeddingProvider, ImageProvider
 from app.llm.embeddings import HashingEmbedding, HttpEmbedding
 from app.llm.openrouter import OpenRouterChat, OpenRouterImage
 from app.llm.placeholder_image import PlaceholderImageProvider
+from app.llm.sdxl_image import SDXLImageProvider
 from app.repositories.base import AssetRepository, GameRepository, MemoryRepository
 from app.repositories.memory_repo import (
     InMemoryAssetRepository,
@@ -165,12 +166,26 @@ def _build_providers(
             require_parameters=settings.OPENROUTER_REQUIRE_PARAMETERS,
             **common,
         )
-        if settings.IMAGE_GENERATION_ENABLED:
+        if settings.IMAGE_GENERATION_ENABLED and settings.IMAGE_BACKEND == "openrouter":
             image = OpenRouterImage(model=settings.OPENROUTER_IMAGE_MODEL, **common)
     else:
         log.warning(
             "No OPENROUTER_API_KEY set - running on the scripted narrator. "
             "The game is fully playable; the prose is authored, not generated."
+        )
+
+    # SDXL backend runs locally — it does not need an OpenRouter API key.
+    if settings.IMAGE_GENERATION_ENABLED and settings.IMAGE_BACKEND == "sdxl":
+        image = SDXLImageProvider(
+            model_id=settings.SDXL_MODEL_ID,
+            model_dir=settings.SDXL_MODEL_DIR,
+            device=settings.SDXL_DEVICE,
+            torch_dtype=settings.SDXL_TORCH_DTYPE,
+            num_inference_steps=settings.SDXL_NUM_INFERENCE_STEPS,
+            guidance_scale=settings.SDXL_GUIDANCE_SCALE,
+            negative_prompt=settings.SDXL_NEGATIVE_PROMPT,
+            enable_attention_slicing=settings.SDXL_ATTENTION_SLICING,
+            enable_vae_tiling=settings.SDXL_VAE_TILING,
         )
 
     if image is None:

@@ -69,17 +69,44 @@ services:
       # Put OPENROUTER_API_KEY in a .env file next to this one to enable the LLM.
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       IMAGE_GENERATION_ENABLED: ${IMAGE_GENERATION_ENABLED:-False}
+      # Set to "sdxl" to use local GPU-based Stable Diffusion XL instead of OpenRouter.
+      IMAGE_BACKEND: ${IMAGE_BACKEND:-openrouter}
+      # SDXL settings (only used when IMAGE_BACKEND=sdxl).
+      SDXL_MODEL_ID: ${SDXL_MODEL_ID:-stabilityai/stable-diffusion-xl-base-1.0}
+      SDXL_DEVICE: ${SDXL_DEVICE:-cuda}
+      SDXL_TORCH_DTYPE: ${SDXL_TORCH_DTYPE:-float16}
+      SDXL_NUM_INFERENCE_STEPS: ${SDXL_NUM_INFERENCE_STEPS:-30}
+      SDXL_GUIDANCE_SCALE: ${SDXL_GUIDANCE_SCALE:-7.5}
+      SDXL_NEGATIVE_PROMPT: ${SDXL_NEGATIVE_PROMPT:-}
+      SDXL_ATTENTION_SLICING: ${SDXL_ATTENTION_SLICING:-True}
+      SDXL_VAE_TILING: ${SDXL_VAE_TILING:-False}
+      # Weights are stored under /srv/api/models/sdxl (a mounted volume).
+      SDXL_MODEL_DIR: models/sdxl
+      HF_HOME: /srv/api/models/sdxl
+      TRANSFORMERS_CACHE: /srv/api/models/sdxl
     volumes:
       # Only used if ASSET_BACKEND falls back to local.
       - api_assets:/data/assets
+      # Persists downloaded SDXL model weights across container rebuilds.
+      - sdxl_models:/srv/api/models/sdxl
     depends_on:
       mongodb:
         condition: service_healthy
       minio:
         condition: service_healthy
+    # Reserve the GPU for SDXL inference.  Docker requires the NVIDIA Container
+    # Toolkit (nvidia-container-toolkit) to be installed on the host.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     restart: unless-stopped
 
 volumes:
   mongodb_data:
   minio_data:
   api_assets:
+  sdxl_models:

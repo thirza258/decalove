@@ -77,8 +77,24 @@ class Settings(BaseSettings):
     # -- Images ----------------------------------------------------------------------
     #: Off by default: image models cost real money per scene.
     IMAGE_GENERATION_ENABLED: bool = False
+    #: "openrouter" uses the cloud API; "sdxl" runs stabilityai/stable-diffusion-xl-base-1.0
+    #: locally on GPU via Hugging Face diffusers + PyTorch.
+    IMAGE_BACKEND: Literal["openrouter", "sdxl"] = "openrouter"
     IMAGE_WIDTH: int = 1024
     IMAGE_HEIGHT: int = 576
+
+    # -- SDXL local GPU settings (only used when IMAGE_BACKEND=sdxl) ----------------
+    SDXL_MODEL_ID: str = "stabilityai/stable-diffusion-xl-base-1.0"
+    #: Local directory where the SDXL weights are stored. Relative paths resolve
+    #: against the api/ directory (i.e. the repo's api/ folder).
+    SDXL_MODEL_DIR: str = "models/sdxl"
+    SDXL_DEVICE: str = "cuda"
+    SDXL_TORCH_DTYPE: str = "float16"
+    SDXL_NUM_INFERENCE_STEPS: int = 30
+    SDXL_GUIDANCE_SCALE: float = 7.5
+    SDXL_NEGATIVE_PROMPT: str = ""
+    SDXL_ATTENTION_SLICING: bool = True
+    SDXL_VAE_TILING: bool = False
 
     # -- Embeddings ------------------------------------------------------------------
     EMBEDDING_BACKEND: Literal["hashing", "http"] = "hashing"

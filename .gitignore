@@ -34,6 +34,8 @@ venv/
 /api/.env
 # Generated art when the local asset store is in use
 /api/var/
+# SDXL model weights (~6.5 GB) — downloaded by download_model.py
+/api/models/
 .pytest_cache/
 .coverage
 htmlcov/
