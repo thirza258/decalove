@@ -578,54 +578,98 @@ class ScriptedNarrator:
 
     def opening(self, session: GameSession) -> GeneratedRun:
         """The first run of a new game — PRD §30 opening scene."""
-        rng = random.Random(f"{session.id}:opening")
         world = self.world
-        location = world.location(session.world.location) or world.locations[0]
-        cast = [c for c in world.characters if c.id in session.world.present_characters]
-        if not cast:
-            cast = list(world.characters[:2])
-        first, second = (cast + list(world.characters))[:2]
         player = session.player.name
 
-        steps: list[GeneratedStep] = [
-            self._narration(
-                location.id,
-                f"{world.premise}",
-                visual_character=None,
+        # Ensure we have the core cast available, falling back to whoever is defined
+        aiko = world.character("aiko") or world.characters[0]
+        ren = world.character("ren") or (world.characters[1] if len(world.characters) > 1 else aiko)
+        mika = world.character("mika") or (world.characters[2] if len(world.characters) > 2 else aiko)
+        haruto = world.character("haruto") or (world.characters[3] if len(world.characters) > 3 else aiko)
+
+        all_cast = [c.id for c in world.characters]
+
+        steps: list[GeneratedStep] = []
+
+        # Steps 0-3 (Classroom, morning)
+        steps.append(self._narration("classroom", f"{world.premise}", visual_character=None))
+        steps.append(self._narration("classroom", "Class 2-B smells of chalk dust and floor wax. Everyone stops to look as you walk in.", visual_character=None, present=all_cast))
+        steps.append(self._dialogue("classroom", aiko, self._opening_line(aiko, player), emotion=aiko.default_emotion, present=all_cast))
+        steps.append(self._dialogue("classroom", ren, self._opening_line(ren, player, second=True), emotion=ren.default_emotion, present=all_cast))
+
+        # Steps 4-6 (Classroom -> Cafeteria transition, noon)
+        steps.append(self._narration("classroom", "The morning drags on. Finally, the chime rings for the lunch break.", visual_character=None, present=all_cast))
+        steps.append(GeneratedStep(
+            type=StepType.transition,
+            location="cafeteria",
+            characters=all_cast,
+            narration="The hallways are a chaotic rush, pushing you toward the long tables of the cafeteria.",
+            visual=self._visual("cafeteria", None)
+        ))
+        steps.append(self._narration("cafeteria", "Before you can even find a seat, a blur of motion slides into the space next to you.", visual_character=mika.id, expression=mika.default_emotion, present=all_cast))
+
+        # Steps 7-9 (Cafeteria, noon)
+        steps.append(self._dialogue("cafeteria", mika, self._opening_line(mika, player), emotion=mika.default_emotion, present=all_cast))
+        steps.append(self._dialogue("cafeteria", ren, "Give them room to breathe, Mika. Not everyone runs on rocket fuel.", emotion="amused", present=all_cast))
+        steps.append(self._narration("cafeteria", "The noise of the cafeteria washes over the table. It's loud, but strangely comforting.", visual_character=None, present=all_cast))
+
+        # Steps 10-13 (Library, afternoon)
+        steps.append(GeneratedStep(
+            type=StepType.transition,
+            location="library",
+            characters=all_cast,
+            narration="Escaping the noise, you find the library. The smell of old paper is a welcome relief.",
+            visual=self._visual("library", None)
+        ))
+        steps.append(self._narration("library", "Tall shelves cast long shadows. You spot someone shelving books in the quiet corner.", visual_character=haruto.id, expression=haruto.default_emotion, present=all_cast))
+        steps.append(self._dialogue("library", haruto, self._opening_line(haruto, player), emotion=haruto.default_emotion, present=all_cast))
+        steps.append(self._narration("library", "He goes back to his work, leaving you to the quiet afternoon.", visual_character=None, present=all_cast))
+
+        # Step 14 (Library, afternoon) - CHOICE
+        aiko_fn = aiko.name.split()[0]
+        ren_fn = ren.name.split()[0]
+        mika_fn = mika.name.split()[0]
+        haruto_fn = haruto.name.split()[0]
+
+        steps.append(self._choice_step(
+            "library",
+            all_cast,
+            (
+                f"Go find {aiko_fn} — she mentioned something about council work.",
+                f"See if {ren_fn} is still in the art room.",
+                f"Take {mika_fn} up on that offer to show you around.",
+                f"Stay here with {haruto_fn} and the quiet.",
+                "Go explore the rooftop everyone keeps mentioning.",
             ),
-            self._narration(
-                location.id,
-                f"{location.description} {rng.choice(location.ambience or ('',))}".strip(),
+            narration="The afternoon opens up. What do you do with it?"
+        ))
+
+        # Steps 15-18 (Rooftop, afternoon/sunset)
+        steps.append(GeneratedStep(
+            type=StepType.transition,
+            location="rooftop",
+            characters=all_cast,
+            narration="You wind your way up the stairs, pushing open the heavy metal door to the roof.",
+            visual=self._visual("rooftop", None)
+        ))
+        steps.append(self._narration("rooftop", "The city stretches out past the chain-link fence. The wind is sharper up here.", visual_character=None, present=all_cast))
+        steps.append(self._dialogue("rooftop", aiko, "It's a good view. People come up here when they need to think.", emotion="thoughtful" if "thoughtful" in aiko.expressions else aiko.default_emotion, present=all_cast))
+        steps.append(self._narration("rooftop", "The sky begins to turn orange. The first day is almost over.", visual_character=None, present=all_cast))
+
+        # Step 19 (Rooftop/School Gate, sunset) - CHOICE
+        steps.append(self._choice_step(
+            "rooftop",
+            all_cast,
+            (
+                f"Ask {aiko_fn} to walk home together.",
+                "Stay a little longer and watch the sky change.",
+                "Head to the school gate before the crowd thins out.",
+                "Check if the library is still open.",
             ),
-            self._dialogue(
-                location.id,
-                first,
-                self._opening_line(first, player),
-                emotion=first.default_emotion,
-                present=[c.id for c in cast],
-            ),
-            self._dialogue(
-                location.id,
-                second,
-                self._opening_line(second, player, second=True),
-                emotion=second.default_emotion,
-                present=[c.id for c in cast],
-            ),
-        ]
-        steps.append(
-            self._choice_step(
-                location.id,
-                [c.id for c in cast],
-                (
-                    f"Introduce yourself properly to {first.name.split()[0]}.",
-                    f"Say something to {second.name.split()[0]} instead.",
-                    "Take the empty seat and keep your head down.",
-                    "Apologise to the room for being six weeks late.",
-                ),
-                narration="Six weeks late, and the whole room is waiting to see what you do with it.",
-            )
-        )
-        return GeneratedRun(steps=steps, summary=f"{player} arrived in {location.name} for the first time.")
+            narration="The sunset paints everything the same colour. What now?"
+        ))
+
+        return GeneratedRun(steps=steps, summary=f"{player} survived their first day at school.")
 
     def finale(self, session: GameSession, directive: Directive) -> GeneratedRun:
         """The last run of the story. Terminates in a ``StepType.ending``."""

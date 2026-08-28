@@ -186,6 +186,7 @@ def _build_providers(
             negative_prompt=settings.SDXL_NEGATIVE_PROMPT,
             enable_attention_slicing=settings.SDXL_ATTENTION_SLICING,
             enable_vae_tiling=settings.SDXL_VAE_TILING,
+            offline_mode=settings.SDXL_OFFLINE_MODE,
         )
 
     if image is None:

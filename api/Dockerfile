@@ -11,6 +11,9 @@ ENV PIP_NO_CACHE_DIR=1 \
     DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+        software-properties-common \
+    && add-apt-repository -y ppa:deadsnakes/ppa \
+    && apt-get update && apt-get install -y --no-install-recommends \
         python3.12 python3.12-venv python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
@@ -21,7 +24,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 
 COPY requirements.txt ./
 # Install PyTorch with CUDA support from the PyTorch index.
-RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cu121 \
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cu128 \
     && pip install --no-cache-dir -r requirements.txt
 
 
@@ -42,6 +45,9 @@ ENV PYTHONUNBUFFERED=1 \
     TRANSFORMERS_CACHE=/srv/api/models/sdxl
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+        software-properties-common \
+    && add-apt-repository -y ppa:deadsnakes/ppa \
+    && apt-get update && apt-get install -y --no-install-recommends \
         python3.12 python3.12-venv \
     && rm -rf /var/lib/apt/lists/*
 
@@ -55,6 +61,7 @@ RUN useradd --create-home --uid 10001 decalove \
 WORKDIR /srv/api
 COPY --chown=decalove:decalove app ./app
 COPY --chown=decalove:decalove download_model.py ./download_model.py
+COPY --chown=decalove:decalove scripts ./scripts
 
 USER decalove
 EXPOSE 8000

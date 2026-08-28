@@ -94,6 +94,7 @@ class Validator:
         session: GameSession,
         *,
         allow_ending: bool = False,
+        is_opening: bool = False,
     ) -> ValidationReport:
         """Repair a generated run into something the engine can commit.
 
@@ -106,6 +107,7 @@ class Validator:
         kept: list[GeneratedStep] = []
         location = session.world.location
         known = set(self.world.character_ids)
+        step_limit = len(run.steps) if is_opening else self.max_steps
 
         def flag(rule: str, detail: str, remedy: str, index: int | None) -> None:
             violations.append(
@@ -113,8 +115,8 @@ class Validator:
             )
 
         for index, original in enumerate(run.steps):
-            if len(kept) >= self.max_steps:
-                flag("run_structure", f"run exceeded {self.max_steps} steps", "truncated", index)
+            if len(kept) >= step_limit:
+                flag("run_structure", f"run exceeded {step_limit} steps", "truncated", index)
                 break
 
             step = original.model_copy(deep=True)
@@ -294,7 +296,7 @@ class Validator:
 
             kept.append(step)
 
-            if step.is_terminal:
+            if step.is_terminal and not is_opening:
                 if index < len(run.steps) - 1:
                     flag(
                         "run_structure",

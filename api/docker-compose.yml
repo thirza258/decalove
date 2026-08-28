@@ -80,6 +80,9 @@ services:
       SDXL_NEGATIVE_PROMPT: ${SDXL_NEGATIVE_PROMPT:-}
       SDXL_ATTENTION_SLICING: ${SDXL_ATTENTION_SLICING:-True}
       SDXL_VAE_TILING: ${SDXL_VAE_TILING:-False}
+      # Load from local cache only — no HuggingFace HTTP requests.
+      # Set to False for the first run to download weights, then leave True.
+      SDXL_OFFLINE_MODE: ${SDXL_OFFLINE_MODE:-True}
       # Weights are stored under /srv/api/models/sdxl (a mounted volume).
       SDXL_MODEL_DIR: models/sdxl
       HF_HOME: /srv/api/models/sdxl
@@ -88,7 +91,7 @@ services:
       # Only used if ASSET_BACKEND falls back to local.
       - api_assets:/data/assets
       # Persists downloaded SDXL model weights across container rebuilds.
-      - sdxl_models:/srv/api/models/sdxl
+      - ./models/sdxl:/srv/api/models/sdxl
     depends_on:
       mongodb:
         condition: service_healthy
@@ -109,4 +112,3 @@ volumes:
   mongodb_data:
   minio_data:
   api_assets:
-  sdxl_models:

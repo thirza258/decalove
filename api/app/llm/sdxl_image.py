@@ -53,24 +53,34 @@ def _load_pipeline(
     torch_dtype_name: str,
     enable_attention_slicing: bool,
     enable_vae_tiling: bool,
+    offline_mode: bool = False,
 ) -> Any:
     """Load the SDXL pipeline.  Called once, inside a worker thread."""
     import torch
     from diffusers import StableDiffusionXLPipeline
 
-    cache_dir = _resolve_model_dir(model_dir)
     dtype = getattr(torch, torch_dtype_name, torch.float16)
+    if device == "cuda" and not torch.cuda.is_available():
+        log.warning(
+            "CUDA was requested (SDXL_DEVICE=cuda), but torch.cuda.is_available() is False on this environment. "
+            "Falling back to CPU."
+        )
+        device = "cpu"
+        dtype = torch.float32
+
+    cache_dir = _resolve_model_dir(model_dir)
     log.info(
-        "Loading SDXL pipeline %s on %s (%s), cache_dir=%s …",
-        model_id, device, dtype, cache_dir,
+        "Loading SDXL pipeline %s on %s (%s), cache_dir=%s, offline=%s …",
+        model_id, device, dtype, cache_dir, offline_mode,
     )
 
     pipe = StableDiffusionXLPipeline.from_pretrained(
         model_id,
         torch_dtype=dtype,
         use_safetensors=True,
-        variant="fp16",
+        variant="fp16" if dtype == torch.float16 else None,
         cache_dir=str(cache_dir),
+        local_files_only=offline_mode,
     )
     pipe = pipe.to(device)
 
@@ -128,6 +138,7 @@ class SDXLImageProvider:
         negative_prompt: str = "",
         enable_attention_slicing: bool = True,
         enable_vae_tiling: bool = False,
+        offline_mode: bool = False,
     ) -> None:
         self._model_id = model_id
         self._model_dir = model_dir
@@ -138,6 +149,7 @@ class SDXLImageProvider:
         self._negative_prompt = negative_prompt
         self._enable_attention_slicing = enable_attention_slicing
         self._enable_vae_tiling = enable_vae_tiling
+        self._offline_mode = offline_mode
         self._pipe: Any = None
         self._lock = asyncio.Lock()
 
@@ -158,6 +170,7 @@ class SDXLImageProvider:
                     self._torch_dtype,
                     self._enable_attention_slicing,
                     self._enable_vae_tiling,
+                    self._offline_mode,
                 ),
             )
             return self._pipe

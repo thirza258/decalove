@@ -95,6 +95,10 @@ class Settings(BaseSettings):
     SDXL_NEGATIVE_PROMPT: str = ""
     SDXL_ATTENTION_SLICING: bool = True
     SDXL_VAE_TILING: bool = False
+    #: When True, skip HuggingFace Hub HTTP requests and load entirely from
+    #: the local cache.  Requires that weights have been downloaded at least once
+    #: (via ``download_model.py`` or a previous online run).
+    SDXL_OFFLINE_MODE: bool = True
 
     # -- Embeddings ------------------------------------------------------------------
     EMBEDDING_BACKEND: Literal["hashing", "http"] = "hashing"

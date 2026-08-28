@@ -1,4 +1,5 @@
-"""Narrative Agent — PRD §9.4 and the ten-step generation of §10.
+"""
+Narrative Agent — PRD §9.4 and the ten-step generation of §10.
 
 One call produces one *run*: a linear sequence of beats that stops the moment the player
 must decide again (docs/ARCHITECTURE.md §1.1). Everything it returns passes through the
@@ -86,7 +87,7 @@ class NarrativeAgent:
         strong hook, and the model takes over from the player's very first decision.
         """
         run = self.scripted.opening(session)
-        return self._finish(run, session, used_fallback=False, provider="authored")
+        return self._finish(run, session, used_fallback=False, provider="authored", is_opening=True)
 
     async def generate(
         self,
@@ -169,9 +170,13 @@ class NarrativeAgent:
         used_fallback: bool,
         provider: str,
         directive: Directive | None = None,
+        is_opening: bool = False,
     ) -> RunResult:
         report = self.validator.validate(
-            run, session, allow_ending=bool(directive and directive.is_finale)
+            run,
+            session,
+            allow_ending=bool(directive and directive.is_finale),
+            is_opening=is_opening,
         )
         summary = run.summary.strip() or self._derive_summary(report.steps)
         return RunResult(
