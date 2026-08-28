@@ -56,10 +56,22 @@ init -3 python:
 
 
     def decalove_background(location_id):
-        """Placeholder background for a location, cached per location."""
+        """Background for a location. Uses local static art if available, otherwise procedural fallback."""
         cache = store.decalove_bg_cache
         if location_id in cache:
             return cache[location_id]
+
+        # Check local static asset files first
+        for candidate in (
+            "images/bg/%s.png" % location_id,
+            "images/bg/%s_morning.png" % location_id,
+            "images/bg/%s_noon.png" % location_id,
+            "images/bg/%s_sunset.png" % location_id,
+        ):
+            if renpy.loadable(candidate):
+                art = Transform(Image(candidate), fit="cover", xysize=(config.screen_width, config.screen_height))
+                cache[location_id] = art
+                return art
 
         location = store.decalove_world_locations.get(location_id, {})
         palette = location.get("palette") or list(DECALOVE_FALLBACK_PALETTE)
@@ -83,11 +95,21 @@ init -3 python:
 
 
     def decalove_sprite(character_id, expression):
-        """Placeholder sprite: a coloured column with an initial and a mood."""
+        """Sprite for a character. Uses local static art if available, otherwise procedural fallback."""
         key = (character_id, expression)
         cache = store.decalove_sprite_cache
         if key in cache:
             return cache[key]
+
+        # Check local static asset files first
+        for candidate in (
+            "images/characters/%s/%s.png" % (character_id, expression),
+            "images/characters/%s.png" % character_id,
+        ):
+            if renpy.loadable(candidate):
+                art = Transform(Image(candidate), fit="contain", xysize=(480, 854))
+                cache[key] = art
+                return art
 
         character = store.decalove_world_characters.get(character_id, {})
         palette = character.get("palette") or list(DECALOVE_FALLBACK_PALETTE)
