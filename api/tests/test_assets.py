@@ -118,3 +118,35 @@ class TestPngEncoder:
     def test_a_row_count_mismatch_is_rejected(self):
         with pytest.raises(ValueError, match="expected 3 rows"):
             encode_png(2, 3, [b"\x00" * 6])
+
+
+class TestAssetServiceProbability:
+    async def test_cached_assets_always_reused_regardless_of_probability(self, tmp_path):
+        from app.agents.visual import AssetSpec
+        from app.domain.enums import AssetStatus
+        from app.llm.placeholder_image import PlaceholderImageProvider
+        from app.repositories.memory_repo import InMemoryAssetRepository
+        from app.services.asset_service import AssetService
+
+        repo = InMemoryAssetRepository()
+        store = LocalAssetStore(tmp_path)
+        service = AssetService(
+            repo, store, PlaceholderImageProvider(), enabled=True, generation_probability=0.0
+        )
+        spec = AssetSpec(kind="background", cache_key="bg_known", prompt="classroom")
+
+        # First when prob=0.0 and uncached -> skips generation
+        ref1 = await service.ensure(spec, "w")
+        assert ref1.status is AssetStatus.unavailable
+
+        # Now pre-fill asset in repo
+        service_active = AssetService(
+            repo, store, PlaceholderImageProvider(), enabled=True, generation_probability=1.0
+        )
+        ref2 = await service_active.ensure(spec, "w")
+        assert ref2.status is AssetStatus.ready
+
+        # Now with prob=0.0 -> already generated image is 100% reused
+        ref3 = await service.ensure(spec, "w")
+        assert ref3.status is AssetStatus.ready
+        assert ref3.asset_id == ref2.asset_id

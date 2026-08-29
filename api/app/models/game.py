@@ -27,6 +27,12 @@ class ActionRequest(BaseModel):
     input: str = Field(min_length=1, max_length=600)
 
 
+class SkipRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    until_step: int = Field(default=19, ge=0)
+
+
 class ChoiceRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -76,6 +82,16 @@ class NextStepOut(BaseModel):
 
     status: Literal["ready", "pending", "awaiting_player", "ended"]
     step: StoryStep | None = None
+    queue_depth: int = 0
+    retry_after_ms: int = 700
+    ambience: list[str] = Field(default_factory=list)
+
+
+class StepsBatchOut(BaseModel):
+    """Batch of steps delivered at once so the Ren'Py client can loop locally without per-click requests."""
+
+    status: Literal["ready", "pending", "awaiting_player", "ended"]
+    steps: list[StoryStep] = Field(default_factory=list)
     queue_depth: int = 0
     retry_after_ms: int = 700
     ambience: list[str] = Field(default_factory=list)

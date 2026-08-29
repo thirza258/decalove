@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     MINIO_SECURE: bool = False
     MINIO_BUCKET_NAME: str = "decalove-assets"
 
+    # -- Redis & Celery --------------------------------------------------------------
+    REDIS_URL: str = "redis://localhost:6379/0"
+    CELERY_BROKER_URL: str = "redis://localhost:6379/0"
+    CELERY_RESULT_BACKEND: str = "redis://localhost:6379/0"
+    TASK_QUEUE_BACKEND: Literal["asyncio", "celery"] = "asyncio"
+
     # -- Backend selection -----------------------------------------------------------
     # "auto" probes the service on startup and falls back to the offline implementation
     # with a loud warning, so the game runs with no Docker at all.
@@ -42,7 +48,7 @@ class Settings(BaseSettings):
     OPENROUTER_IMAGE_MODEL: str = "google/gemini-3.1-flash-image"
     # Keeps the request off provider endpoints that would ignore response_format.
     OPENROUTER_REQUIRE_PARAMETERS: bool = True
-    OPENROUTER_TIMEOUT_S: float = 90.0
+    OPENROUTER_TIMEOUT_S: float = 120.0
     OPENROUTER_MAX_RETRIES: int = 2
     OPENROUTER_SITE_URL: str = ""
     OPENROUTER_APP_NAME: str = "Decalove"
@@ -56,7 +62,7 @@ class Settings(BaseSettings):
     MIN_CHOICES: int = 3
     MAX_CHOICES: int = 5
     TEMPERATURE: float = 0.85
-    MAX_OUTPUT_TOKENS: int = 6000
+    MAX_OUTPUT_TOKENS: int = 12000
     GENERATION_TIMEOUT_S: float = 120.0
     #: PRD §24 Rule 4 — the most any single step may move a relationship axis.
     MAX_RELATIONSHIP_DELTA: int = 5
@@ -84,6 +90,8 @@ class Settings(BaseSettings):
     IMAGE_BACKEND: Literal["openrouter", "sdxl"] = "openrouter"
     IMAGE_WIDTH: int = 1024
     IMAGE_HEIGHT: int = 576
+    #: Very low generation probability for new unseen images (5%); mostly generates text and reuses existing art.
+    IMAGE_GENERATION_PROBABILITY: float = 0.05
 
     # -- SDXL local GPU settings (only used when IMAGE_BACKEND=sdxl) ----------------
     SDXL_MODEL_ID: str = "stabilityai/stable-diffusion-xl-base-1.0"

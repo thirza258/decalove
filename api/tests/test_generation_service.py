@@ -351,3 +351,24 @@ class TestSpeculationIsolation:
         assert set(engine.generation._speculative) == {"survivor:step_00001:choice_1"}
         assert "doomed" not in engine.generation._locks
         await engine.generation.shutdown()
+
+    async def test_celery_task_backend_dispatch(self, world, tmp_path, monkeypatch):
+        """When TASK_QUEUE_BACKEND=celery, submit dispatches to Celery task queue."""
+        calls = []
+
+        class DummyTask:
+            @staticmethod
+            def delay(*args, **kwargs):
+                calls.append((args, kwargs))
+
+        monkeypatch.setattr("app.tasks.generation_tasks.generate_batch_task", DummyTask)
+
+        engine = Engine(world, tmp_path)
+        engine.generation.task_backend = "celery"
+        session = await engine.start(world)
+
+        batch = await engine.generation.submit(session.id, INTENT, decision=TYPED)
+        assert batch is not None
+        assert len(calls) == 1
+        assert calls[0][0][0] == session.id
+        await engine.generation.shutdown()

@@ -56,11 +56,12 @@ OUTPUT CONTRACT
   {min_choices} real options is worse than none: if you cannot find {min_choices}
   distinct intentions, use type "prompt" and let them write their own.
 * Every step needs a `visual`. `background` must be a location id from the list.
-  `expression` must come from that character's expression list.
+  `expression` must come from that character's expression list. Prioritise staying within
+  the established location and characters present to maintain visual continuity and reuse scene art.
 * Use `memory` sparingly: only for things a character would still be thinking about a
   week later. importance 0.0-1.0.
 * narration is prose, 1-3 sentences, present tense, close third person about the world.
-* Write dialogue that sounds like the specific character, not like a generic anime script.
+* Write rich, characterful dialogue and evocative text that drives the story forward.
 
 CONTENT BOUNDARIES ({rating})
 {safety}"""

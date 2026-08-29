@@ -22,6 +22,8 @@ from app.models.game import (
     LocationOut,
     NewGameRequest,
     NextStepOut,
+    SkipRequest,
+    StepsBatchOut,
     WorldOut,
 )
 from app.runtime import Runtime
@@ -126,6 +128,40 @@ async def next_step(
         return await runtime.game_service.next_step(game_id, wait_ms)
     except GameNotFound as exc:
         raise _not_found(game_id) from exc
+
+
+@router.get("/games/{game_id}/steps/batch", response_model=StepsBatchOut)
+async def next_batch(
+    game_id: str,
+    limit: int = Query(default=20, ge=1, le=100, description="maximum number of steps to fetch in this batch"),
+    wait_ms: int = Query(default=0, ge=0, le=30000, description="hold the request briefly if steps are pending"),
+    runtime: Runtime = RuntimeDep,
+) -> StepsBatchOut:
+    """Fetch an entire batch of queued steps at once for client-side local playback."""
+    try:
+        return await runtime.game_service.next_batch(game_id, limit=limit, wait_ms=wait_ms)
+    except GameNotFound as exc:
+        raise _not_found(game_id) from exc
+
+
+@router.post("/games/{game_id}/skip", response_model=GameStateOut)
+async def skip_steps(
+    game_id: str,
+    request: SkipRequest | None = None,
+    runtime: Runtime = RuntimeDep,
+) -> GameStateOut:
+    """Fast-forward the delivery cursor, committing all passed steps to state.
+
+    Used by the client to hand off after playing the static opening locally.
+    """
+    until_step = request.until_step if request else 19
+    try:
+        session = await runtime.game_service.skip_to_step(game_id, until_step)
+    except GameNotFound as exc:
+        raise _not_found(game_id) from exc
+    except InvalidAction as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    return runtime.game_service.to_state(session)
 
 
 @router.post("/games/{game_id}/actions", response_model=AcceptedOut, status_code=status.HTTP_202_ACCEPTED)

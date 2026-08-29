@@ -95,6 +95,60 @@ class TestRequestShape:
         )
         assert "provider" not in json.loads(recorded[0].content)
 
+    async def test_unparseable_json_attempts_repair(self, monkeypatch):
+        attempts = 0
+
+        def handler(request, n):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                return httpx.Response(200, json={"choices": [{"message": {"content": "not-json"}}]})
+            return completion({"ok": True, "repaired": True})
+
+        wire(monkeypatch, handler)
+        result = await chat().complete_json(
+            system="s", user="u", schema_name="n", schema={}
+        )
+        assert result == {"ok": True, "repaired": True}
+        assert attempts == 2
+
+    async def test_json_repair_handles_trailing_commas_and_fences(self, monkeypatch):
+        broken_json = """Here is the output:
+```json
+{
+  "title": "Decalove",
+  "steps": [
+    {"index": 0, "narration": "Hello world",},
+  ],
+}
+```
+"""
+        wire(monkeypatch, lambda request, n: httpx.Response(
+            200, json={"choices": [{"message": {"content": broken_json}}]}
+        ))
+        result = await chat().complete_json(
+            system="s", user="u", schema_name="n", schema={}
+        )
+        assert result["title"] == "Decalove"
+        assert len(result["steps"]) == 1
+
+    async def test_json_repair_handles_truncated_steps_array(self, monkeypatch):
+        truncated_json = """{
+  "title": "Decalove",
+  "steps": [
+    {"index": 0, "narration": "First step"},
+    {"index": 1, "narration": "Second step"},
+    {"index": 2, "narration": "Incomplete
+"""
+        wire(monkeypatch, lambda request, n: httpx.Response(
+            200, json={"choices": [{"message": {"content": truncated_json}}]}
+        ))
+        result = await chat().complete_json(
+            system="s", user="u", schema_name="n", schema={}
+        )
+        assert result["title"] == "Decalove"
+        assert len(result["steps"]) == 2
+
     async def test_content_returned_as_parts_is_reassembled(self, monkeypatch):
         def handler(request, n):
             return httpx.Response(

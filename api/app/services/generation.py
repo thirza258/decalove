@@ -43,6 +43,7 @@ class GenerationService:
         assets: AssetService,
         timeout_s: float = 120.0,
         speculative_branches: int = 0,
+        task_backend: str = "asyncio",
     ) -> None:
         self.games = games
         self.narrative = narrative
@@ -52,6 +53,7 @@ class GenerationService:
         self.assets = assets
         self.timeout_s = timeout_s
         self.speculative_branches = speculative_branches
+        self.task_backend = task_backend
 
         self._locks: dict[str, asyncio.Lock] = {}
         self._tasks: set[asyncio.Task[None]] = set()
@@ -139,7 +141,21 @@ class GenerationService:
             snapshot = session
 
         prepared = self._pop_speculation(speculative_key)
-        self._spawn(self._run_batch(game_id, batch, intent, decision, snapshot, prepared))
+        if self.task_backend == "celery":
+            try:
+                from app.tasks.generation_tasks import generate_batch_task
+                generate_batch_task.delay(
+                    game_id,
+                    batch.batch_id,
+                    intent.model_dump(),
+                    decision.model_dump(),
+                    speculative_key,
+                )
+            except Exception:
+                log.warning("failed to dispatch batch to Celery, falling back to in-process async", exc_info=True)
+                self._spawn(self._run_batch(game_id, batch, intent, decision, snapshot, prepared))
+        else:
+            self._spawn(self._run_batch(game_id, batch, intent, decision, snapshot, prepared))
         return batch
 
     def _pop_speculation(self, key: str | None) -> tuple[RunResult, Directive] | None:
@@ -257,7 +273,24 @@ class GenerationService:
         """
         misses = await self._commit(game_id, batch, result, intent, directive)
         if misses:
-            self._spawn(self._fill_assets(game_id, misses))
+            if self.task_backend == "celery":
+                try:
+                    from app.tasks.generation_tasks import generate_assets_task
+                    session = await self.games.get(game_id)
+                    world_id = session.world_id if session else ""
+                    generate_assets_task.delay(
+                        game_id,
+                        [
+                            {"kind": s.kind, "cache_key": s.cache_key, "prompt": s.prompt}
+                            for s in misses
+                        ],
+                        world_id,
+                    )
+                except Exception:
+                    log.warning("failed to dispatch asset generation to Celery, falling back", exc_info=True)
+                    self._spawn(self._fill_assets(game_id, misses))
+            else:
+                self._spawn(self._fill_assets(game_id, misses))
 
     async def _commit(
         self,

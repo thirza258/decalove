@@ -46,6 +46,25 @@ def _resolve_model_dir(model_dir: str) -> Path:
     return p
 
 
+def _patch_torch_compat() -> None:
+    try:
+        import torch
+        if not hasattr(torch, "xpu"):
+            class _DummyXPU:
+                @staticmethod
+                def is_available() -> bool:
+                    return False
+                @staticmethod
+                def device_count() -> int:
+                    return 0
+                @staticmethod
+                def current_device() -> int:
+                    return 0
+            torch.xpu = _DummyXPU()
+    except Exception:
+        pass
+
+
 def _load_pipeline(
     model_id: str,
     model_dir: str,
@@ -56,6 +75,7 @@ def _load_pipeline(
     offline_mode: bool = False,
 ) -> Any:
     """Load the SDXL pipeline.  Called once, inside a worker thread."""
+    _patch_torch_compat()
     import torch
     from diffusers import StableDiffusionXLPipeline
 

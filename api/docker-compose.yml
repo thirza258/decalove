@@ -49,6 +49,20 @@ services:
       start_period: 15s
     restart: unless-stopped
 
+  redis:
+    image: redis:7-alpine
+    container_name: decalove-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
   api:
     build:
       context: .
@@ -63,6 +77,10 @@ services:
       # a container that quietly loses every save is worse than one that fails loudly.
       STORAGE_BACKEND: mongo
       ASSET_BACKEND: minio
+      TASK_QUEUE_BACKEND: celery
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
       MONGODB_URL: mongodb://root:rootpassword@mongodb:27017
       MINIO_ENDPOINT: minio:9000
       CORS_ORIGINS: '["*"]'
@@ -87,6 +105,8 @@ services:
       SDXL_MODEL_DIR: models/sdxl
       HF_HOME: /srv/api/models/sdxl
       TRANSFORMERS_CACHE: /srv/api/models/sdxl
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
     volumes:
       # Only used if ASSET_BACKEND falls back to local.
       - api_assets:/data/assets
@@ -97,8 +117,62 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
-    # Reserve the GPU for SDXL inference.  Docker requires the NVIDIA Container
+      redis:
+        condition: service_healthy
+    # Reserve the GPU for SDXL inference. Docker requires the NVIDIA Container
     # Toolkit (nvidia-container-toolkit) to be installed on the host.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: decalove-api
+    container_name: decalove-worker
+    command: ["celery", "-A", "app.tasks.celery_app.celery_app", "worker", "--loglevel=info", "--concurrency=2"]
+    environment:
+      STORAGE_BACKEND: mongo
+      ASSET_BACKEND: minio
+      TASK_QUEUE_BACKEND: celery
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      MONGODB_URL: mongodb://root:rootpassword@mongodb:27017
+      MINIO_ENDPOINT: minio:9000
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      IMAGE_GENERATION_ENABLED: ${IMAGE_GENERATION_ENABLED:-False}
+      IMAGE_BACKEND: ${IMAGE_BACKEND:-openrouter}
+      SDXL_MODEL_ID: ${SDXL_MODEL_ID:-stabilityai/stable-diffusion-xl-base-1.0}
+      SDXL_DEVICE: ${SDXL_DEVICE:-cuda}
+      SDXL_TORCH_DTYPE: ${SDXL_TORCH_DTYPE:-float16}
+      SDXL_NUM_INFERENCE_STEPS: ${SDXL_NUM_INFERENCE_STEPS:-30}
+      SDXL_GUIDANCE_SCALE: ${SDXL_GUIDANCE_SCALE:-7.5}
+      SDXL_NEGATIVE_PROMPT: ${SDXL_NEGATIVE_PROMPT:-}
+      SDXL_ATTENTION_SLICING: ${SDXL_ATTENTION_SLICING:-True}
+      SDXL_VAE_TILING: ${SDXL_VAE_TILING:-False}
+      SDXL_OFFLINE_MODE: ${SDXL_OFFLINE_MODE:-True}
+      SDXL_MODEL_DIR: models/sdxl
+      HF_HOME: /srv/api/models/sdxl
+      TRANSFORMERS_CACHE: /srv/api/models/sdxl
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    volumes:
+      - api_assets:/data/assets
+      - ./models/sdxl:/srv/api/models/sdxl
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     deploy:
       resources:
         reservations:
@@ -112,3 +186,4 @@ volumes:
   mongodb_data:
   minio_data:
   api_assets:
+  redis_data:

@@ -29,7 +29,7 @@ from app.domain.state import (
     WorldState,
 )
 from app.domain.story import StoryStep
-from app.models.game import GameStateOut, NextStepOut
+from app.models.game import GameStateOut, NextStepOut, StepsBatchOut
 from app.repositories.base import GameRepository
 from app.services.asset_service import AssetService
 from app.services.generation import GenerationService
@@ -143,6 +143,28 @@ class GameService:
     async def list_ids(self, limit: int = 50) -> list[str]:
         return await self.games.list_ids(limit)
 
+    async def skip_to_step(self, game_id: str, until_index: int) -> GameSession:
+        """Fast-forward the delivery cursor, committing each skipped step to live state.
+
+        Used for hand-off when the client plays the authored opening locally.
+        """
+        async with self.generation.lock(game_id):
+            session = await self.games.get(game_id)
+            if session is None:
+                raise GameNotFound(game_id)
+            if session.ended:
+                raise InvalidAction("this game has ended")
+
+            target = min(until_index, len(session.steps) - 1)
+            if target > session.cursor:
+                for idx in range(session.cursor + 1, target + 1):
+                    step = session.steps[idx]
+                    await self._commit_step(session, step)
+                session.cursor = target
+                session.played()
+                await self.games.save(session)
+            return session
+
     # -- playback ------------------------------------------------------------------------
 
     async def next_step(self, game_id: str, wait_ms: int = 0) -> NextStepOut:
@@ -219,13 +241,81 @@ class GameService:
                     retry_after_ms=300,
                 )
 
-            self._kicked.discard(game_id)
             session.cursor += 1
             step = session.steps[session.cursor]
             await self._commit_step(session, step)
             session.played()
             await self.games.save(session)
             return NextStepOut(status="ready", step=step, queue_depth=session.queue_depth)
+
+    async def next_batch(self, game_id: str, limit: int = 20, wait_ms: int = 0) -> StepsBatchOut:
+        """Deliver up to *limit* steps at once, optionally waiting briefly for steps to appear."""
+        deadline = time.monotonic() + min(max(0, wait_ms), self.max_wait_ms) / 1000.0
+
+        while True:
+            outcome = await self._try_deliver_batch(game_id, limit)
+            if outcome.status != "pending" or time.monotonic() >= deadline:
+                return outcome
+            await asyncio.sleep(POLL_INTERVAL_S)
+
+    async def _try_deliver_batch(self, game_id: str, limit: int = 20) -> StepsBatchOut:
+        async with self.generation.lock(game_id):
+            session = await self.games.get(game_id)
+            if session is None:
+                raise GameNotFound(game_id)
+
+            if session.ended:
+                head = session.current_step
+                return StepsBatchOut(
+                    status="ended",
+                    steps=[head] if (head and head.is_ending) else [],
+                    queue_depth=session.queue_depth,
+                )
+
+            if session.queue_depth == 0:
+                if session.pending and session.pending.status in (
+                    BatchStatus.queued,
+                    BatchStatus.running,
+                ):
+                    self._kicked.discard(game_id)
+                    return StepsBatchOut(
+                        status="pending",
+                        queue_depth=0,
+                        ambience=self._ambience(session),
+                        retry_after_ms=700,
+                    )
+
+                if session.awaiting_player:
+                    self._kicked.discard(game_id)
+                    head = session.current_step
+                    return StepsBatchOut(
+                        status="awaiting_player",
+                        steps=[head] if head else [],
+                        queue_depth=0,
+                    )
+
+                log.info("game %s ran dry; requesting a continuation", game_id)
+                self._kick(session.id)
+                return StepsBatchOut(
+                    status="pending",
+                    queue_depth=0,
+                    ambience=self._ambience(session),
+                    retry_after_ms=300,
+                )
+
+            self._kicked.discard(game_id)
+            delivered: list[StoryStep] = []
+            count = min(limit, session.queue_depth)
+
+            for _ in range(count):
+                session.cursor += 1
+                step = session.steps[session.cursor]
+                await self._commit_step(session, step)
+                delivered.append(step)
+
+            session.played()
+            await self.games.save(session)
+            return StepsBatchOut(status="ready", steps=delivered, queue_depth=session.queue_depth)
 
     def _kick(self, game_id: str) -> None:
         """Self-heal a dry queue by submitting a low-key continuation.

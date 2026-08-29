@@ -8,6 +8,7 @@ built-in placeholder, so art always trails the story instead of blocking it.
 from __future__ import annotations
 
 import logging
+import random
 import uuid
 
 from app.agents.visual import AssetSpec
@@ -31,6 +32,7 @@ class AssetService:
         *,
         api_prefix: str = "/api/v1",
         enabled: bool = False,
+        generation_probability: float = 1.0,
         width: int = 1024,
         height: int = 576,
     ) -> None:
@@ -39,6 +41,7 @@ class AssetService:
         self.image = image
         self.api_prefix = api_prefix
         self.enabled = enabled and image is not None
+        self.generation_probability = generation_probability
         self.width = width
         self.height = height
 
@@ -72,6 +75,11 @@ class AssetService:
         if record is not None:
             return await self.to_ref(record)
         if not self.enabled or self.image is None:
+            return AssetRef(cache_key=spec.cache_key, status=AssetStatus.unavailable)
+
+        # Gate brand new image generation to keep the story mostly text-focused and fast
+        if self.generation_probability < 1.0 and random.random() > self.generation_probability:
+            log.debug("skipping new image generation for %s (probability gate)", spec.cache_key)
             return AssetRef(cache_key=spec.cache_key, status=AssetStatus.unavailable)
 
         try:

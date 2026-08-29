@@ -248,6 +248,7 @@ async def build_runtime(settings: Settings) -> Runtime:
         image,
         api_prefix=settings.API_PREFIX,
         enabled=settings.IMAGE_GENERATION_ENABLED,
+        generation_probability=settings.IMAGE_GENERATION_PROBABILITY,
         width=settings.IMAGE_WIDTH,
         height=settings.IMAGE_HEIGHT,
     )
@@ -260,6 +261,7 @@ async def build_runtime(settings: Settings) -> Runtime:
         assets=asset_service,
         timeout_s=settings.GENERATION_TIMEOUT_S,
         speculative_branches=settings.SPECULATIVE_PREFETCH_MAX_BRANCHES,
+        task_backend=settings.TASK_QUEUE_BACKEND,
     )
     game_service = GameService(
         world=world,

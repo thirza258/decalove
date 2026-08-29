@@ -1,37 +1,12 @@
 # syntax=docker/dockerfile:1
 
-# ---- builder -----------------------------------------------------------------
-# Dependencies are installed into their own layer so application edits do not
-# invalidate the pip cache on every rebuild.
-# Using NVIDIA CUDA base image for GPU-accelerated SDXL inference.
-FROM nvidia/cuda:12.9.0-runtime-ubuntu24.04 AS builder
-
-ENV PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    DEBIAN_FRONTEND=noninteractive
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3 python3-venv python3-pip \
-    && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /build
-
-RUN python3 -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
-
-COPY requirements.txt ./
-# Install PyTorch with CUDA support from the PyTorch index.
-RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cu128 \
-    && pip install --no-cache-dir -r requirements.txt
-
-
-# ---- runtime -----------------------------------------------------------------
-FROM nvidia/cuda:12.9.0-runtime-ubuntu24.04 AS runtime
+# Using official PyTorch image with CUDA support pre-installed
+# so PyTorch/CUDA wheels are not downloaded on every build.
+FROM pytorch/pytorch:latest
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     DEBIAN_FRONTEND=noninteractive \
-    PATH="/opt/venv/bin:$PATH" \
     # Inside compose, MongoDB and MinIO are reachable by service name.
     MONGODB_URL=mongodb://root:rootpassword@mongodb:27017 \
     MINIO_ENDPOINT=minio:9000 \
@@ -41,11 +16,11 @@ ENV PYTHONUNBUFFERED=1 \
     HF_HOME=/srv/api/models/sdxl \
     TRANSFORMERS_CACHE=/srv/api/models/sdxl
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3 python3-venv \
-    && rm -rf /var/lib/apt/lists/*
+WORKDIR /build
 
-COPY --from=builder /opt/venv /opt/venv
+COPY requirements.txt ./
+# Install additional project dependencies (torch is already pre-installed in base image)
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Non-root: the container writes to /data and /srv/api/models.
 RUN useradd --create-home --uid 10001 decalove \

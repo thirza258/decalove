@@ -23,13 +23,129 @@ from app.llm.base import ImageError, LLMError
 
 log = logging.getLogger(__name__)
 
-_FENCE = re.compile(r"^\s*```(?:json)?\s*(.*?)\s*```\s*$", re.DOTALL)
 _RETRYABLE_STATUS = {408, 409, 425, 429, 500, 502, 503, 504}
 
 
 def _unfence(text: str) -> str:
-    match = _FENCE.match(text)
-    return match.group(1) if match else text
+    stripped = text.strip()
+    if "```" in stripped:
+        match = re.search(r"```(?:json)?\s*([\s\S]*?)(?:```|$)", stripped, re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+    return stripped
+
+
+def _repair_json(raw: str) -> dict[str, Any]:
+    text = _unfence(raw)
+
+    # 1. Extract outermost JSON object if preamble or postamble text exists
+    start_idx = text.find("{")
+    end_idx = text.rfind("}")
+    if start_idx != -1:
+        if end_idx != -1 and end_idx > start_idx:
+            candidate = text[start_idx : end_idx + 1]
+        else:
+            candidate = text[start_idx:]
+    else:
+        candidate = text
+
+    # Direct parse attempt
+    try:
+        val = json.loads(candidate)
+        if isinstance(val, dict):
+            return val
+    except json.JSONDecodeError:
+        pass
+
+    # 2. Fix trailing commas before } or ]
+    cleaned = re.sub(r",\s*([}\]])", r"\1", candidate)
+    try:
+        val = json.loads(cleaned)
+        if isinstance(val, dict):
+            return val
+    except json.JSONDecodeError:
+        pass
+
+    # 3. Handle truncated JSON cut off inside a "steps" array
+    steps_match = re.search(r'"steps"\s*:\s*\[', cleaned)
+    if steps_match:
+        last_step_end = -1
+        depth = 0
+        in_string = False
+        escape = False
+        array_start = steps_match.end() - 1
+
+        for i in range(array_start, len(cleaned)):
+            char = cleaned[i]
+            if escape:
+                escape = False
+                continue
+            if char == '\\':
+                escape = True
+                continue
+            if char == '"':
+                in_string = not in_string
+                continue
+            if not in_string:
+                if char == '{':
+                    depth += 1
+                elif char == '}':
+                    depth -= 1
+                    if depth == 1:
+                        last_step_end = i
+
+        if last_step_end != -1:
+            truncated = cleaned[: last_step_end + 1]
+            truncated = re.sub(r",\s*$", "", truncated)
+            truncated += "\n  ]\n}"
+            try:
+                val = json.loads(truncated)
+                if isinstance(val, dict) and "steps" in val:
+                    return val
+            except json.JSONDecodeError:
+                pass
+
+    # 4. Bracket stack auto-closer for truncated objects
+    stack: list[str] = []
+    in_str = False
+    esc = False
+    for char in cleaned:
+        if esc:
+            esc = False
+            continue
+        if char == '\\':
+            esc = True
+            continue
+        if char == '"':
+            in_str = not in_str
+            continue
+        if not in_str:
+            if char in ('{', '['):
+                stack.append(char)
+            elif char == '}' and stack and stack[-1] == '{':
+                stack.pop()
+            elif char == ']' and stack and stack[-1] == '[':
+                stack.pop()
+
+    if stack:
+        auto_fixed = cleaned
+        if in_str:
+            auto_fixed += '"'
+        auto_fixed = re.sub(r",\s*$", "", auto_fixed)
+        for item in reversed(stack):
+            auto_fixed += '}' if item == '{' else ']'
+        try:
+            val = json.loads(auto_fixed)
+            if isinstance(val, dict):
+                return val
+        except json.JSONDecodeError:
+            pass
+
+    # Re-parse candidate directly to raise a clear LLMError with line details
+    val = json.loads(candidate)
+    if not isinstance(val, dict):
+        raise ValueError(f"expected JSON object, got {type(val).__name__}")
+    return val
 
 
 class _OpenRouterBase:
@@ -119,7 +235,7 @@ class OpenRouterChat(_OpenRouterBase):
         user: str,
         schema_name: str,
         schema: dict[str, Any],
-        max_tokens: int = 4096,
+        max_tokens: int = 12000,
         temperature: float = 0.8,
     ) -> dict[str, Any]:
         messages = [
@@ -151,7 +267,7 @@ class OpenRouterChat(_OpenRouterBase):
                 **payload,
                 "messages": messages
                 + [
-                    {"role": "assistant", "content": raw[:8000]},
+                    {"role": "assistant", "content": raw[:32000]},
                     {
                         "role": "user",
                         "content": (
@@ -184,8 +300,8 @@ class OpenRouterChat(_OpenRouterBase):
     @staticmethod
     def _parse(raw: str) -> dict[str, Any]:
         try:
-            value = json.loads(_unfence(raw))
-        except ValueError as exc:
+            value = _repair_json(raw)
+        except Exception as exc:
             raise LLMError(f"model did not return JSON: {exc}") from exc
         if not isinstance(value, dict):
             raise LLMError(f"model returned {type(value).__name__}, expected a JSON object")

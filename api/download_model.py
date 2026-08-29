@@ -56,6 +56,19 @@ def main() -> None:
     os.environ["TRANSFORMERS_CACHE"] = str(model_path)
 
     import torch
+    if not hasattr(torch, "xpu"):
+        class _DummyXPU:
+            @staticmethod
+            def is_available() -> bool:
+                return False
+            @staticmethod
+            def device_count() -> int:
+                return 0
+            @staticmethod
+            def current_device() -> int:
+                return 0
+        torch.xpu = _DummyXPU()
+
     from diffusers import StableDiffusionXLPipeline
 
     dtype = getattr(torch, settings.SDXL_TORCH_DTYPE, torch.float16)

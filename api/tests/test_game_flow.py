@@ -64,6 +64,56 @@ class TestNewGame:
         assert state["player"]["name"] == "Rin"
         assert state["player"]["pronouns"] == "she/her"
 
+    def test_skip_opening_fast_forwards_cursor_and_commits_state(self, client):
+        state = new_game(client)
+        game_id = state["game_id"]
+        assert state["current_step_index"] == -1
+
+        # Fast-forward past the 20 opening steps
+        skip_resp = client.post(f"/api/v1/games/{game_id}/skip", json={"until_step": 19})
+        assert skip_resp.status_code == 200
+        updated = skip_resp.json()
+        assert updated["current_step_index"] == 19
+        assert updated["queue_depth"] == 0
+        assert updated["world"]["location"] == "rooftop"
+
+        # Submit choice from opening step 14 triggers next batch
+        action_resp = client.post(
+            f"/api/v1/games/{game_id}/actions",
+            json={"input": "Go explore the rooftop everyone keeps mentioning."},
+        )
+        assert action_resp.status_code == 202
+
+        # Next delivered step is step 20 (batch 1, not step 0!)
+        next_resp = client.get(f"/api/v1/games/{game_id}/steps/next", params={"wait_ms": 3000})
+        assert next_resp.status_code == 200
+        step_body = next_resp.json()
+        assert step_body["status"] == "ready"
+        assert step_body["step"]["index"] == 20
+
+
+class TestBatchEndpoint:
+    def test_next_batch_fetches_all_queued_steps_at_once(self, client):
+        game_id = new_game(client)["game_id"]
+        # Skip opening to step 14 and submit choice to generate batch
+        client.post(f"/api/v1/games/{game_id}/skip", json={"until_step": 14})
+        client.post(
+            f"/api/v1/games/{game_id}/actions",
+            json={"input": "Go explore the rooftop everyone keeps mentioning."},
+        )
+        client.post(f"/api/v1/games/{game_id}/skip", json={"until_step": 19})
+
+        # Fetch batch
+        batch_resp = client.get(
+            f"/api/v1/games/{game_id}/steps/batch",
+            params={"limit": 20, "wait_ms": 3000},
+        )
+        assert batch_resp.status_code == 200
+        body = batch_resp.json()
+        assert body["status"] == "ready"
+        assert len(body["steps"]) > 0
+        assert body["steps"][0]["index"] == 20
+
 
 class TestChoices:
     def test_a_choice_generates_the_next_run(self, client):
@@ -321,6 +371,7 @@ class TestImagePipeline:
         monkeypatch.setattr(settings, "LOCAL_ASSET_DIR", str(tmp_path / "assets"))
         monkeypatch.setattr(settings, "OPENROUTER_API_KEY", "")
         monkeypatch.setattr(settings, "IMAGE_GENERATION_ENABLED", True)
+        monkeypatch.setattr(settings, "IMAGE_GENERATION_PROBABILITY", 1.0)
         monkeypatch.setattr(settings, "IMAGE_BACKEND", "openrouter")
 
         from app.main import app
