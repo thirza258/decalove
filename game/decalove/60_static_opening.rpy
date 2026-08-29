@@ -95,6 +95,7 @@ label decalove_static_opening:
     haruto_char "...You're in my light."
 
     # Step 13
+    hide haruto with dissolve
     "He goes back to his work, leaving you to the quiet afternoon."
 
     # Step 14 - Choice Point 1
@@ -113,9 +114,13 @@ label decalove_static_opening:
         "Stay here with Haruto and the quiet.":
             $ _opening_choice = "Stay here with Haruto and the quiet."
 
+        "Go explore the rooftop everyone keeps mentioning.":
+            $ _opening_choice = "Go explore the rooftop everyone keeps mentioning."
+
     python:
         if store.decalove_game_id:
-            # Choice at step 15 triggers generation for the next 20 steps
+            # Advance server state to step 14 and trigger background batch generation
+            decalove_skip_to_step(14)
             decalove_submit_action(_opening_choice)
 
 
@@ -134,10 +139,17 @@ label decalove_static_opening:
     aiko_char "It's a good view. People come up here when they need to think."
 
     # Step 18
-    hide aiko
+    hide aiko with dissolve
     "The sky begins to turn orange. The first day is almost over."
 
     # Step 19
+    show aiko thoughtful at decalove_sprite_at with dissolve
     "The sunset paints everything in warm amber light as your first day draws to a close."
+    hide aiko with dissolve
+
+    python:
+        if store.decalove_game_id:
+            # Fast-forward server cursor through step 19 for seamless handoff to decalove_play
+            decalove_skip_to_step(19)
 
     return

@@ -67,6 +67,15 @@ init -2 python:
         )
 
 
+    def decalove_skip_to_step(until_index):
+        if not store.decalove_game_id:
+            return None
+        return decalove_api.post(
+            "/games/%s/skip" % store.decalove_game_id,
+            {"until_step": until_index},
+        )
+
+
     def decalove_ask_freetext():
         """PRD §8 Method B. Called from outside any screen, never from within one."""
         typed = renpy.input(
@@ -109,18 +118,9 @@ init -2 python:
         if store.decalove_save_expired:
             return "expired"
 
-        body = decalove_api.get(
-            "/games/%s/steps/next" % store.decalove_game_id,
-            params={"wait_ms": DECALOVE_WAIT_MS},
-            wait_ms=DECALOVE_WAIT_MS,
-        )
-        if body is None:
-            return "offline"
-
-        status = body.get("status")
-
-        if status == "ready":
-            step = body["step"]
+        # 1. If steps are buffered locally, play the next one with 0 network latency!
+        if store.decalove_step_buffer:
+            step = store.decalove_step_buffer.pop(0)
             store.decalove_ambient_seen = 0
             decalove_render(step)
             decalove_speak(step)
@@ -128,11 +128,52 @@ init -2 python:
                 decalove_decide(step)
             return "ok"
 
+        # 2. Local buffer is empty: fetch the entire next batch (up to 20 steps at once)
+        body = decalove_api.get(
+            "/games/%s/steps/batch" % store.decalove_game_id,
+            params={"limit": 20, "wait_ms": DECALOVE_WAIT_MS},
+            wait_ms=DECALOVE_WAIT_MS,
+        )
+        if body is None:
+            # Fallback to single step endpoint if batch is unavailable
+            body = decalove_api.get(
+                "/games/%s/steps/next" % store.decalove_game_id,
+                params={"wait_ms": DECALOVE_WAIT_MS},
+                wait_ms=DECALOVE_WAIT_MS,
+            )
+            if body is None:
+                return "offline"
+
+        status = body.get("status")
+
+        if status == "ready":
+            steps = body.get("steps")
+            if steps:
+                first_step = steps[0]
+                store.decalove_step_buffer = list(steps[1:])
+                store.decalove_ambient_seen = 0
+                decalove_render(first_step)
+                decalove_speak(first_step)
+                if first_step.get("type") in ("choice", "prompt"):
+                    decalove_decide(first_step)
+                return "ok"
+            elif body.get("step"):
+                step = body["step"]
+                store.decalove_ambient_seen = 0
+                decalove_render(step)
+                decalove_speak(step)
+                if step.get("type") in ("choice", "prompt"):
+                    decalove_decide(step)
+                return "ok"
+            return "ok"
+
         if status == "awaiting_player":
             ## Reached when a generation failed: the server is offering the same
             ## decision point again rather than stranding the player.
+            steps = body.get("steps") or ([body["step"]] if body.get("step") else [])
             store.decalove_ambient_seen = 0
-            decalove_decide(body["step"])
+            if steps:
+                decalove_decide(steps[0])
             return "ok"
 
         if status == "pending":
@@ -145,14 +186,11 @@ init -2 python:
             return "pending"
 
         if status == "ended":
-            ## The server carries the ending step here so a client that reconnected --
-            ## or that lost the response the beat was delivered in -- still sees the
-            ## story close rather than being dropped back to the menu mid-sentence.
-            step = body.get("step")
-            if step and not store.decalove_seen_ending:
+            steps = body.get("steps") or ([body["step"]] if body.get("step") else [])
+            if steps and not store.decalove_seen_ending:
                 store.decalove_seen_ending = True
-                decalove_render(step)
-                decalove_speak(step)
+                decalove_render(steps[0])
+                decalove_speak(steps[0])
             return "ended"
 
         return "ok"

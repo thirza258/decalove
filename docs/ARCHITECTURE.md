@@ -66,7 +66,7 @@ committed code chose differently, and those choices are kept.
 |---|---|---|
 | PostgreSQL | **MongoDB** | Committed from the start; the story-step ledger is document-shaped. Persistence sits behind a repository protocol, so Postgres remains a swap, not a rewrite. |
 | pgvector / vector DB | **In-process cosine similarity** over stored embeddings | MongoDB 7 *community* has no `$vectorSearch` (Atlas-only), and the compose file runs the community image. At MVP scale (4 characters, tens of memories per save) a full scan is faster than a network hop and removes an infra dependency. |
-| Redis + background workers | **In-process `asyncio` tasks** behind a `GenerationService` seam | One less service for a single-node MVP. The seam is where arq/Celery/Redis goes when the game runs on more than one worker process. |
+| Redis + background workers | **In-process `asyncio` tasks (default) + Celery/Redis worker support** | Single-node runs with zero dependencies via `asyncio`; distributed environments switch seamlessly to Celery + Redis workers via `TASK_QUEUE_BACKEND=celery`. |
 | Object storage / CDN | **MinIO**, with a local-filesystem store as fallback | MinIO was committed; the local store means the game runs with no Docker at all. |
 | Image models via OpenRouter only | **Three image backends**: OpenRouter, local SDXL on GPU, deterministic placeholder | Local SDXL (stabilityai/stable-diffusion-xl-base-1.0 via diffusers) removes per-image API cost and works with no key; the placeholder keeps the whole pipeline exercisable with nothing installed. The provider is chosen by `IMAGE_BACKEND`. |
 | Ten-step generation | **20-step batches, decision point at step 10–15** | See §5. |
@@ -224,16 +224,15 @@ step — checking the other way round would re-offer the menu the player just an
 (the regression test `test_answering_a_decision_never_re_offers_it_while_generating`
 guards exactly this, with a slowed narrative agent to make the window real).
 
-### The static opening (in progress)
+### The static opening
 
 The client ships an authored static first day (`game/decalove/60_static_opening.rpy`):
 20 beats over local static art (`images/bg/*.png`, `images/characters/*.png`), choice
 at step 14, which syncs to the engine as a free-text action so the next 20 steps
 generate while steps 15–19 play. It mirrors the server's authored opening
-(`ScriptedNarrator.opening()`, the same 20 beats) and is **defined but not yet wired
-into the entry point** — `script.rpy` currently plays the server opening through the
-normal playback loop. Wiring the two together needs a cursor hand-off (skip the
-server's first 20 steps), which is the remaining piece of that work.
+(`ScriptedNarrator.opening()`, the same 20 beats) and is wired into the entry point
+(`game/script.rpy`) via cursor hand-off: `POST /games/{id}/skip` advances the delivery
+cursor and commits state sequentially through step 19 before `decalove_play` takes over.
 
 ---
 
@@ -634,7 +633,7 @@ game/decalove/
   30_state.rpy         boot, world cache, after_load re-attach, expired-save detection
   40_screens.rpy       decision screen (with free-text door), offline, expired
   50_player.rpy        the playback loop
-  60_static_opening.rpy  authored first day over local art (not yet wired in - see §5)
+  60_static_opening.rpy  authored first day over local art (wired in via cursor hand-off)
 game/script.rpy        entry point + character setup
 ```
 
@@ -760,7 +759,7 @@ The test injects a slow narrative agent to make the window real.
 | A run against a real LLM | `OPENROUTER_API_KEY` | The path is covered by a stub provider, not by a live call. Model ids in `.env.example` were checked against OpenRouter's live model list. |
 | Real cloud image generation | `OPENROUTER_API_KEY` + `IMAGE_GENERATION_ENABLED=true` | The pipeline runs end-to-end offline against the placeholder PNG generator, so caching, storage and delivery are exercised — only the model call is untested. |
 | ~~Local SDXL image generation~~ | — | **Available.** Weights are downloaded under `api/models/sdxl`; generation requires a CUDA GPU (the compose file reserves one via the NVIDIA container toolkit). Not exercised in CI. |
-| Wiring the static opening | Cursor hand-off | `60_static_opening.rpy` is authored and syncs its choice to the engine, but the entry point still plays the server-authored opening (§5). Needs a "skip the first 20 server steps" step. |
+| ~~Wiring the static opening~~ | — | **Completed.** `60_static_opening.rpy` is wired into `script.rpy` with `/games/{id}/skip` cursor hand-off and background batch generation. |
 | Ren'Py build and playtest | Ren'Py SDK not installed | Static checks stand in (see §15). Nothing here has been seen on screen. |
 | Multi-process generation queue | Redis, once there is more than one API process | The in-process `asyncio` tasks and per-game locks are correct for one node only. `MongoGameRepository` already raises `StaleSessionError` rather than losing a write. Two API processes sweeping for garbage at once is safe — the loser's under-lock re-check finds the session already gone — but they duplicate the scan. |
 | Endings written by a real model | `OPENROUTER_API_KEY` | The gate, the promotion and the refusal are covered by tests; the *prose* of a model-written finale has only been exercised through the authored offline finale. |

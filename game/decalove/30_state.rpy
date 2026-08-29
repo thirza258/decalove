@@ -10,6 +10,7 @@ init -3 python:
         store.decalove_bg_cache = {}
         store.decalove_sprite_cache = {}
         store.decalove_image_cache = {}
+        store.decalove_step_buffer = []
 
 
     def decalove_load_world():
@@ -125,6 +126,7 @@ default decalove_image_cache = {}
 default decalove_ambient_index = -1
 default decalove_ambient_seen = 0
 default decalove_shown_character = None
+default decalove_step_buffer = []
 
 
 label after_load:

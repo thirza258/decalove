@@ -30,6 +30,8 @@ label start:
         call screen decalove_offline(message=decalove_api.last_error or "Could not start a new game.")
         return
 
+    call decalove_static_opening
+
     call decalove_play
 
     return
