@@ -113,8 +113,10 @@ label decalove_static_opening:
         "Stay here with Haruto and the quiet.":
             $ _opening_choice = "Stay here with Haruto and the quiet."
 
-        "Go explore the rooftop everyone keeps mentioning.":
-            $ _opening_choice = "Go explore the rooftop everyone keeps mentioning."
+    python:
+        if store.decalove_game_id:
+            # Choice at step 15 triggers generation for the next 20 steps
+            decalove_submit_action(_opening_choice)
 
 
     # =========================================================================
@@ -135,26 +137,7 @@ label decalove_static_opening:
     hide aiko
     "The sky begins to turn orange. The first day is almost over."
 
-    # Step 19 - Choice Point 2
-    "The sunset paints everything the same colour. What now?"
-
-    menu:
-        "Ask Aiko to walk home together.":
-            $ _final_choice = "Ask Aiko to walk home together."
-
-        "Stay a little longer and watch the sky change.":
-            $ _final_choice = "Stay a little longer and watch the sky change."
-
-        "Head to the school gate before the crowd thins out.":
-            $ _final_choice = "Head to the school gate before the crowd thins out."
-
-        "Check if the library is still open.":
-            $ _final_choice = "Check if the library is still open."
-
-    # Sync state with backend if connected
-    python:
-        if store.decalove_game_id:
-            # Advance cursor or post player's action
-            decalove_submit_action(_final_choice)
+    # Step 19
+    "The sunset paints everything in warm amber light as your first day draws to a close."
 
     return
