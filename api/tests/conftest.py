@@ -18,6 +18,8 @@ sys.path.insert(0, str(ROOT))
 os.environ.setdefault("STORAGE_BACKEND", "memory")
 os.environ.setdefault("ASSET_BACKEND", "local")
 os.environ.setdefault("OPENROUTER_API_KEY", "")
+os.environ.setdefault("IMAGE_GENERATION_ENABLED", "False")
+os.environ.setdefault("IMAGE_BACKEND", "openrouter")
 
 from app.agents.director import DirectorAgent  # noqa: E402
 from app.agents.safety import SafetyFilter  # noqa: E402
@@ -57,7 +59,7 @@ def world():
 
 @pytest.fixture
 def validator(world):
-    return Validator(world=world, safety=SafetyFilter(), max_delta=5, max_steps=10)
+    return Validator(world=world, safety=SafetyFilter(), max_delta=5, max_steps=20)
 
 
 @pytest.fixture

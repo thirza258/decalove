@@ -342,7 +342,7 @@ class TestStateChangesTheStoryOffline:
     def test_without_a_directive_the_narrator_still_works(self, narrator, session):
         """The offline path must not depend on planning having happened."""
         run = narrator.run(session, PlayerIntent(action="talk_to", target="aiko", raw="hi"))
-        assert run.steps and run.steps[-1].is_blocking
+        assert run.steps and any(s.is_blocking for s in run.steps)
 
 
 class TestImplicitTarget:

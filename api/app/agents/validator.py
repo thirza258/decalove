@@ -84,7 +84,7 @@ class Validator:
     world: World
     safety: SafetyFilter
     max_delta: int = 5
-    max_steps: int = 5
+    max_steps: int = 20
     min_choices: int = 3
     max_choices: int = 5
 
@@ -192,14 +192,6 @@ class Validator:
                     step.dialogue = None
 
             if step.narration and not allow_ending:
-                # Rule 1 protects a decision the player has not made yet. The FINAL RUN has
-                # no next decision at any point in it, so the rule protects nothing here --
-                # and leaving it on gutted the ending, because _AGENCY_VERBS covers exactly
-                # the verbs an ending is made of (promise, say, leave, follow).
-                #
-                # Scoping this to `type is ending` did not work: the model cannot emit that
-                # type, so a model-written ending arrives as narration and is only promoted
-                # after this loop has already stripped it.
                 cleaned, removed = strip_agency(step.narration)
                 if removed:
                     flag("player_agency", "narration acted for the player", "rewritten", index)
@@ -265,28 +257,40 @@ class Validator:
                 step.type = StepType.choice
 
             if step.type is StepType.choice:
-                offered = self._normalise_choices(step.next_choices)
-                if len(offered) > self.max_choices:
-                    flag(
-                        "run_structure",
-                        f"{len(offered)} options offered, capped at {self.max_choices}",
-                        "truncated",
-                        index,
-                    )
-                    offered = offered[: self.max_choices]
-                if len(offered) < self.min_choices:
-                    # Topped up rather than downgraded to free text: a short list is the
-                    # model under-delivering, and answering that by taking the menu away
-                    # from the player is a strange punishment.
-                    shortfall = self.min_choices - len(offered)
-                    offered = self._top_up(step, offered)
-                    flag(
-                        "run_structure",
-                        f"only {self.min_choices - shortfall} option(s) offered, topped up to {len(offered)}",
-                        "rewritten",
-                        index,
-                    )
-                step.next_choices = self._renumber(offered)
+                # Ensure only one decision point per run
+                if any(s.is_blocking for s in kept):
+                    flag("run_structure", "extra decision point converted to standard beat", "rewritten", index)
+                    step.type = StepType.dialogue if step.dialogue else StepType.narration
+                    if not (step.dialogue or step.narration):
+                        step.narration = "The moment carries forward quietly."
+                    step.next_choices = []
+                else:
+                    offered = self._normalise_choices(step.next_choices)
+                    if len(offered) > self.max_choices:
+                        flag(
+                            "run_structure",
+                            f"{len(offered)} options offered, capped at {self.max_choices}",
+                            "truncated",
+                            index,
+                        )
+                        offered = offered[: self.max_choices]
+                    if len(offered) < self.min_choices:
+                        shortfall = self.min_choices - len(offered)
+                        offered = self._top_up(step, offered)
+                        flag(
+                            "run_structure",
+                            f"only {self.min_choices - shortfall} option(s) offered, topped up to {len(offered)}",
+                            "rewritten",
+                            index,
+                        )
+                    step.next_choices = self._renumber(offered)
+            elif step.type is StepType.prompt:
+                if any(s.is_blocking for s in kept):
+                    flag("run_structure", "extra prompt point converted to standard beat", "rewritten", index)
+                    step.type = StepType.dialogue if step.dialogue else StepType.narration
+                    if not (step.dialogue or step.narration):
+                        step.narration = "The moment carries forward quietly."
+                    step.next_choices = []
             else:
                 step.next_choices = []
 
@@ -296,23 +300,28 @@ class Validator:
 
             kept.append(step)
 
-            if step.is_terminal and not is_opening:
-                if index < len(run.steps) - 1:
-                    flag(
-                        "run_structure",
-                        f"discarded {len(run.steps) - index - 1} step(s) after the decision point",
-                        "truncated",
-                        index,
-                    )
+            if step.type is StepType.ending:
                 break
 
         if allow_ending and kept:
             kept = self._promote_ending(kept, flag)
-        elif kept and not kept[-1].is_terminal:
-            flag("run_structure", "run did not end at a player decision", "rewritten", None)
-            kept.append(self._terminator(kept[-1]))
+        elif kept and not any(s.is_blocking for s in kept):
+            # If no decision point was present, insert/convert one at step index 14 (or append terminator)
+            if len(kept) >= 15:
+                kept[14] = self._make_choice_step(kept[14])
+                flag("run_structure", "inserted decision point at step index 14", "rewritten", 14)
+            else:
+                flag("run_structure", "run did not end at a player decision", "rewritten", None)
+                kept.append(self._terminator(kept[-1]))
 
         return ValidationReport(steps=kept, violations=violations)
+
+    def _make_choice_step(self, step: GeneratedStep) -> GeneratedStep:
+        updated = step.model_copy(deep=True)
+        updated.type = StepType.choice
+        offered = self._top_up(updated, [])
+        updated.next_choices = self._renumber(offered)
+        return updated
 
     def _promote_ending(self, kept: list[GeneratedStep], flag) -> list[GeneratedStep]:
         """Turn the last run of the story into an actual ending.

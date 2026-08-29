@@ -36,6 +36,7 @@ def stack(monkeypatch):
     monkeypatch.setattr(settings, "MINIO_BUCKET_NAME", bucket)
     monkeypatch.setattr(settings, "OPENROUTER_API_KEY", "")
     monkeypatch.setattr(settings, "IMAGE_GENERATION_ENABLED", True)
+    monkeypatch.setattr(settings, "IMAGE_BACKEND", "placeholder")
 
     from app.storage import storage
 
@@ -62,12 +63,14 @@ def stack(monkeypatch):
             minio.remove_bucket(bucket)
 
 
-def drain(client, game_id, budget=30):
+def drain(client, game_id, budget=60):
     shown = []
     for _ in range(budget):
         body = client.get(f"/api/v1/games/{game_id}/steps/next", params={"wait_ms": 3000}).json()
         if body["status"] == "ready":
             shown.append(body["step"])
+            if body["step"]["type"] in ("choice", "prompt"):
+                return shown, body["step"]
         elif body["status"] == "awaiting_player":
             return shown, body["step"]
         elif body["status"] == "ended":

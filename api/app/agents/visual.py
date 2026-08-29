@@ -116,10 +116,9 @@ class VisualAgent:
                 f"{character.name}, {character.age} year old student",
                 character.appearance,
                 f"{spec.expression} expression" if spec.expression else None,
-                spec.pose,
                 f"at the {location.in_prose}" if location else None,
                 spec.time_of_day,
-                "upper body, facing viewer, transparent background",
+                "half body portrait, waist up, facing viewer, visual novel character sprite, clean transparent background, isolated on white background",
                 self.world.art_style,
             )
             if part

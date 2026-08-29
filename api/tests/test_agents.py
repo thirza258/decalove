@@ -42,10 +42,11 @@ class TestDirector:
 
 
 class TestScriptedNarrator:
-    def test_opening_ends_at_a_choice(self, narrator, session):
+    def test_opening_has_twenty_steps_with_choice_at_step_fifteen(self, narrator, session):
         run = narrator.opening(session)
-        assert run.steps[-1].is_blocking
-        assert len(run.steps[-1].next_choices) >= 2
+        assert len(run.steps) == 20
+        assert run.steps[14].is_blocking
+        assert len(run.steps[14].next_choices) >= 2
 
     def test_run_is_deterministic(self, narrator, session):
         intent = PlayerIntent(action="invite_character", target="aiko", raw="x")

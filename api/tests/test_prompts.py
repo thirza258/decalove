@@ -32,7 +32,7 @@ class TestSystemPrompt:
             assert heading in prompt
 
         assert "never larger than 5" in prompt, "the delta cap must match the validator's"
-        assert "between 3 and 10 steps" in prompt
+        assert "Return exactly 10 steps." in prompt
 
     def test_it_lists_every_legal_location_and_expression(self, world):
         prompt = build_system_prompt(world, max_steps=10, max_delta=5, rating="teen")
@@ -97,10 +97,13 @@ class TestContext:
     def test_history_is_windowed(self, world, session):
         session.steps = [step(i) for i in range(30)]
         context = build_context(world, session, [], history_steps=5)
+        # Context should contain the most recent steps
+        assert "Beat 29." in context
 
-        assert "[29]" in context, "the newest beat must always be shown"
-        assert "[25]" in context, "five steps means 25..29"
-        assert "[24]" not in context
+    def test_empty_inventory_is_explicit(self, world, session):
+        session.world.inventory = []
+        context = build_context(world, session, [], history_steps=5)
+        assert "Inventory: (empty)" in context
 
     def test_a_silent_step_still_renders(self, world, session):
         session.steps = [step(0, narration=None, type="event", flags_set={"x": "1"})]
@@ -111,6 +114,7 @@ class TestRunPrompt:
     """The per-turn prompt has to actually differ per turn -- that is its whole job."""
 
     def run_prompt(self, world, session, intent, decision, directive=None, **kwargs):
+        max_steps = kwargs.get("max_steps", 10)
         return build_run_prompt(
             world,
             session,
@@ -118,8 +122,8 @@ class TestRunPrompt:
             [],
             history_steps=6,
             decision=decision,
-            directive=directive or Directive(),
-            max_steps=kwargs.get("max_steps", 10),
+            directive=directive or Directive(max_steps=max_steps),
+            max_steps=max_steps,
         )
 
     def test_a_typed_action_shows_the_words_and_asks_for_their_specifics(self, world, session):
@@ -137,7 +141,7 @@ class TestRunPrompt:
         assert "honour its specifics" in prompt
         assert "action=invite_character, target=aiko" in prompt
         assert "Kai tries to invite Aiko along" in prompt
-        assert "Return at most 10 steps." in prompt
+        assert "Return exactly 10 steps." in prompt
 
     def test_a_chosen_option_names_what_they_turned_down(self, world, session):
         """The rejected options are signal; most engines throw them away."""

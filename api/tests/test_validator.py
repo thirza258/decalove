@@ -123,7 +123,7 @@ class TestRunStructure:
         )
         assert report.steps[-1].is_blocking
 
-    def test_steps_after_the_first_decision_point_are_discarded(self, validator, session):
+    def test_steps_after_the_first_decision_point_are_kept_and_extra_choices_converted(self, validator, session):
         report = validator.validate(
             run_of(
                 GeneratedStep(
@@ -131,12 +131,20 @@ class TestRunStructure:
                     location="classroom",
                     next_choices=[Choice(id="a", text="Stay."), Choice(id="b", text="Go.")],
                 ),
-                GeneratedStep(type="narration", location="classroom", narration="Discarded."),
+                GeneratedStep(type="narration", location="classroom", narration="Continuation beat."),
+                GeneratedStep(
+                    type="choice",
+                    location="classroom",
+                    next_choices=[Choice(id="c", text="Extra choice.")],
+                ),
             ),
             session,
         )
-        assert len(report.steps) == 1
-        assert any(v.remedy == "truncated" for v in report.violations)
+        assert len(report.steps) == 3
+        assert report.steps[0].is_blocking
+        assert not report.steps[1].is_blocking
+        assert not report.steps[2].is_blocking  # extra choice converted to standard beat
+        assert any(v.remedy == "rewritten" for v in report.violations)
 
     def test_duplicate_choices_are_removed_and_ids_renumbered(self, validator, session):
         report = validator.validate(

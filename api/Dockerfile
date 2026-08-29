@@ -4,22 +4,19 @@
 # Dependencies are installed into their own layer so application edits do not
 # invalidate the pip cache on every rebuild.
 # Using NVIDIA CUDA base image for GPU-accelerated SDXL inference.
-FROM nvidia/cuda:12.1.1-runtime-ubuntu22.04 AS builder
+FROM nvidia/cuda:12.9.0-runtime-ubuntu24.04 AS builder
 
 ENV PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        software-properties-common \
-    && add-apt-repository -y ppa:deadsnakes/ppa \
-    && apt-get update && apt-get install -y --no-install-recommends \
-        python3.12 python3.12-venv python3-pip \
+        python3 python3-venv python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
 
-RUN python3.12 -m venv /opt/venv
+RUN python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 COPY requirements.txt ./
@@ -29,7 +26,7 @@ RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/wh
 
 
 # ---- runtime -----------------------------------------------------------------
-FROM nvidia/cuda:12.1.1-runtime-ubuntu22.04 AS runtime
+FROM nvidia/cuda:12.9.0-runtime-ubuntu24.04 AS runtime
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -45,10 +42,7 @@ ENV PYTHONUNBUFFERED=1 \
     TRANSFORMERS_CACHE=/srv/api/models/sdxl
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        software-properties-common \
-    && add-apt-repository -y ppa:deadsnakes/ppa \
-    && apt-get update && apt-get install -y --no-install-recommends \
-        python3.12 python3.12-venv \
+        python3 python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /opt/venv /opt/venv
@@ -69,6 +63,6 @@ EXPOSE 8000
 # The API boots even when MongoDB and MinIO are unreachable, so the healthcheck
 # asks a real question -- is the runtime assembled? -- not just "is the port open".
 HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=5 \
-    CMD python3.12 -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4).status == 200 else 1)"
+    CMD python3 -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4).status == 200 else 1)"
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

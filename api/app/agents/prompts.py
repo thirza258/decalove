@@ -42,12 +42,15 @@ _RULES = """HARD RULES (violating any of these invalidates the whole response)
 
 OUTPUT CONTRACT
 
-* Return between {min_steps} and {max_steps} steps. Short runs are correct: the player
-  should be making a decision every few lines, not reading a chapter.
-* The run MUST end with exactly one step of type "choice" ({min_choices}-{max_choices}
-  options) or "prompt", and no step before the last may be "choice" or "prompt". That
-  final step is where the player takes the story back; stop there even if the scene feels
-  unfinished.
+* Return exactly {max_steps} steps.
+* Place exactly ONE decision point (a step of type "choice" with {min_choices}-{max_choices}
+  options, or type "prompt") between step 10 and step 15 of this batch (i.e. at the 10th
+  to 15th step of the {max_steps} steps).
+* Steps before the choice develop the reaction to the previous player action and build the scene.
+* The choice step offers the player meaningful options for where to take the story next.
+* Steps after the choice step (e.g. steps 16 to {max_steps}) MUST be narration and dialogue
+  that naturally continue the immediate scene forward while the next run generates in the background.
+* No other step in the run before step 10 or after step 15 may be "choice" or "prompt".
 * Choice option text is what the PLAYER would say or do - written in their voice, short,
   and genuinely different from one another in intent, not in wording. Fewer than
   {min_choices} real options is worse than none: if you cannot find {min_choices}
@@ -224,12 +227,13 @@ PLAYER ACTION
 tone={intent.emotion or '-'}, risk={intent.risk.value}
     Attempt: {_fill(intent.summary, session) if intent.summary else '(none stated)'}
 
-Write what happens next. The player has attempted something; you decide whether it lands,
+Write what happens next as a {max_steps}-step sequence. The player has attempted something; you decide whether it lands,
 how each character present actually reacts given their stance above, and what it costs or
-earns. The attempt does not have to succeed. Stop at the moment the player must decide
-again, and make that final step the choice or prompt.
+earns. The attempt does not have to succeed. Place exactly one decision point (choice or prompt)
+between step 10 and step 15 of the sequence, and continue the immediate scene with narration and dialogue
+through step {max_steps}.
 
-Return at most {max_steps} steps."""
+Return exactly {max_steps} steps."""
 
 
 def build_intent_prompt(world: World, session: GameSession, raw: str) -> str:

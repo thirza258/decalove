@@ -1,6 +1,9 @@
+from pathlib import Path
 from typing import List, Literal
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_API_DIR = Path(__file__).resolve().parent.parent
 
 
 class Settings(BaseSettings):
@@ -45,10 +48,9 @@ class Settings(BaseSettings):
     OPENROUTER_APP_NAME: str = "Decalove"
 
     # -- Generation ------------------------------------------------------------------
-    #: Hard ceiling on one run. A run always stops early at the first decision point, so
-    #: this is also "how many clicks between decisions" -- the prompt asks for 3-5, and
-    #: the validator truncates anything longer.
-    STEPS_PER_BATCH: int = 5
+    #: Hard ceiling on one run. Batches are 20 steps with a decision point placed
+    #: at step 10-15 (e.g. step 14/15) to pipeline generation and eliminate perceived latency.
+    STEPS_PER_BATCH: int = 20
     #: Options offered at a decision point. The validator guarantees this range: it caps
     #: an over-long list and tops up a short one rather than dropping to free text.
     MIN_CHOICES: int = 3
@@ -64,7 +66,7 @@ class Settings(BaseSettings):
     #: branch; see docs/ARCHITECTURE.md §1.2. 0 disables.
     SPECULATIVE_PREFETCH_MAX_BRANCHES: int = 0
     #: How many recent steps are replayed into the prompt as immediate context.
-    HISTORY_STEPS: int = 12
+    HISTORY_STEPS: int = 20
     #: Delivered steps per story arc. The arc advances through World.arcs on this
     #: cadence, which is what keeps a long save from staying in the prologue forever.
     STEPS_PER_ARC: int = 60
@@ -119,11 +121,12 @@ class Settings(BaseSettings):
     # -- Safety ----------------------------------------------------------------------
     CONTENT_RATING: str = "teen"
 
-    model_config = {
-        "env_file": ".env",
-        "case_sensitive": True,
-        "extra": "ignore",
-    }
+    model_config = SettingsConfigDict(
+        env_file=(_API_DIR / ".env", ".env"),
+        env_file_encoding="utf-8",
+        case_sensitive=True,
+        extra="ignore",
+    )
 
     @property
     def has_llm(self) -> bool:

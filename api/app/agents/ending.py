@@ -17,7 +17,7 @@ from app.content.world import World
 from app.domain.state import GameSession
 
 #: Total growth below this and nobody got close enough for the story to be about them.
-GROWTH_FLOOR = 25
+GROWTH_FLOOR = 20
 
 #: How much a point of anger costs against growth. See ``growth_for``.
 ANGER_WEIGHT = 2

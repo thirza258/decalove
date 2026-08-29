@@ -177,7 +177,7 @@ class Directive(BaseModel):
     push_location: str | None = None
     arc_note: str = ""
     style_note: str = ""
-    max_steps: int = 5
+    max_steps: int = 20
     #: Set only by ``DirectorAgent.plan`` once the playthrough has earned an ending. It is
     #: the sole authority: the wire schema cannot express an ending, and the validator
     #: refuses to promote one unless this is true.

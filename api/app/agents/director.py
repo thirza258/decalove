@@ -234,7 +234,7 @@ class DirectorAgent:
         intent: PlayerIntent,
         decision: DecisionContext,
         *,
-        max_steps: int = 10,
+        max_steps: int = 20,
     ) -> Directive:
         """Decide the *shape* of the next run before anything writes a word of it.
 

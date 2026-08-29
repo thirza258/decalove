@@ -12,6 +12,7 @@ import uuid
 
 from app.agents.visual import AssetSpec
 from app.assets.base import AssetStore, AssetStoreError
+from app.assets.transparency import make_transparent_character_png
 from app.domain.asset import AssetRecord
 from app.domain.enums import AssetStatus
 from app.domain.story import AssetRef
@@ -77,6 +78,9 @@ class AssetService:
             data, content_type = await self.image.generate(
                 spec.prompt, width=self.width, height=self.height
             )
+            if spec.kind == "character":
+                data = make_transparent_character_png(data)
+                content_type = "image/png"
         except ImageError as exc:
             log.warning("image generation failed for %s: %s", spec.cache_key, exc)
             return AssetRef(cache_key=spec.cache_key, status=AssetStatus.unavailable)
