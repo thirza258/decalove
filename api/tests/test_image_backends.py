@@ -28,9 +28,19 @@ class Stub:
         self.fails = fails
         self.calls = 0
         self.closed = False
+        self.seen: list[dict] = []
 
-    async def generate(self, prompt: str, *, width: int = 1024, height: int = 576):
+    async def generate(
+        self,
+        prompt: str,
+        *,
+        width: int = 1024,
+        height: int = 576,
+        seed: int | None = None,
+        negative: str | None = None,
+    ):
         self.calls += 1
+        self.seen.append({"prompt": prompt, "seed": seed, "negative": negative})
         if self.fails:
             raise ImageError(f"{self.name} is down")
         return (f"{self.name}:{prompt}".encode(), "image/png")
@@ -97,6 +107,20 @@ class TestFallbackChain:
         message = str(caught.value)
         assert "sdxl-local is down" in message
         assert "openrouter-image is down" in message
+
+    async def test_the_seed_and_negatives_reach_the_backend_that_serves(self):
+        """Consistency is carried by these two, so a link that drops them is a link that
+        draws a different person. The fallback is the easiest place to lose them.
+        """
+        gpu, api = Stub("sdxl-local", fails=True), Stub("openrouter-image")
+
+        await FallbackImageProvider([gpu, api]).generate(
+            "Aiko", seed=1234, negative="multiple people"
+        )
+
+        for stub in (gpu, api):
+            assert stub.seen[-1]["seed"] == 1234
+            assert stub.seen[-1]["negative"] == "multiple people"
 
     async def test_closing_the_chain_closes_every_link(self):
         first, second = Stub("first"), Stub("second")

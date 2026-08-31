@@ -39,13 +39,21 @@ class FallbackImageProvider:
         self.name = "+".join(_name_of(provider) for provider in self._providers)
 
     async def generate(
-        self, prompt: str, *, width: int = 1024, height: int = 576
+        self,
+        prompt: str,
+        *,
+        width: int = 1024,
+        height: int = 576,
+        seed: int | None = None,
+        negative: str | None = None,
     ) -> tuple[bytes, str]:
         failures: list[str] = []
         for provider in self._providers:
             label = _name_of(provider)
             try:
-                result = await provider.generate(prompt, width=width, height=height)
+                result = await provider.generate(
+                    prompt, width=width, height=height, seed=seed, negative=negative
+                )
             except ImageError as exc:
                 failures.append(f"{label}: {exc}")
                 log.warning("image backend %s failed, trying the next: %s", label, exc)

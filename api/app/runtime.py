@@ -277,7 +277,15 @@ async def build_runtime(settings: Settings) -> Runtime:
         min_choices=settings.MIN_CHOICES,
         max_choices=settings.MAX_CHOICES,
     )
-    visual = VisualAgent(world)
+    visual = VisualAgent(
+        world,
+        deterministic_seed=settings.IMAGE_DETERMINISTIC_SEED,
+        seed_salt=settings.IMAGE_SEED_SALT,
+        style_prompt=settings.IMAGE_STYLE_PROMPT,
+        negative_prompt=settings.IMAGE_NEGATIVE_PROMPT,
+        character_scene_context=settings.IMAGE_CHARACTER_SCENE_CONTEXT,
+        character_pose_variants=settings.IMAGE_CHARACTER_POSE_VARIANTS,
+    )
     memory_agent = MemoryAgent(embedder, memories, top_k=settings.MEMORY_TOP_K)
     asset_service = AssetService(
         assets_repo,

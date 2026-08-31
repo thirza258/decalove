@@ -91,7 +91,7 @@ async def main() -> None:
 
     for i, spec in enumerate(specs_to_generate, 1):
         logger.info("Generating [%d/%d] %s: %s", i, len(specs_to_generate), spec.kind, spec.cache_key)
-        ref = await runtime.asset_service.ensure(spec, world.id)
+        ref = await runtime.asset_service.ensure(spec, world.id, gated=False)
         logger.info("  -> Status: %s, Asset ID: %s", ref.status.value, ref.asset_id)
 
     await runtime.close()

@@ -73,7 +73,7 @@ async def main():
 
     for i, (key, spec) in enumerate(unique_specs.items(), 1):
         logger.info(f"Generating [{i}/{len(unique_specs)}] {spec.kind}: {key} …")
-        ref = await runtime.asset_service.ensure(spec, world.id)
+        ref = await runtime.asset_service.ensure(spec, world.id, gated=False)
         logger.info(f"  -> AssetRef: status={ref.status.value}, asset_id={ref.asset_id}, url={ref.url}")
 
     await runtime.close()

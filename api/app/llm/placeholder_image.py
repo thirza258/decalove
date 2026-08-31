@@ -27,11 +27,23 @@ class PlaceholderImageProvider:
     def __init__(self, *, palette: tuple[str, str] | None = None) -> None:
         self._palette = palette
 
-    async def generate(self, prompt: str, *, width: int = 1024, height: int = 576) -> tuple[bytes, str]:
+    async def generate(
+        self,
+        prompt: str,
+        *,
+        width: int = 1024,
+        height: int = 576,
+        seed: int | None = None,
+        negative: str | None = None,
+    ) -> tuple[bytes, str]:
+        # `negative` has no meaning for a gradient. `seed` does: keyed on the subject
+        # rather than the prompt, every stand-in for one character is the same colour,
+        # which is the offline version of the consistency the real backends aim at.
+        basis = str(seed) if seed is not None else prompt
         if self._palette:
             top, bottom = self._palette
         else:
-            digest = hashlib.blake2b(prompt.encode("utf-8"), digest_size=4).digest()
+            digest = hashlib.blake2b(basis.encode("utf-8"), digest_size=4).digest()
             top, bottom = _PALETTES[digest[0] % len(_PALETTES)]
         # Render small and let the client scale: this is a stand-in, not a deliverable.
-        return gradient_png(min(width, 512), min(height, 288), top, bottom, seed=prompt), "image/png"
+        return gradient_png(min(width, 512), min(height, 288), top, bottom, seed=basis), "image/png"

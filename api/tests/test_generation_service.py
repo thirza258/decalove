@@ -300,6 +300,38 @@ class TestAssetWriteBack:
         assert engine.assets_repo._by_id == {}
         await engine.generation.shutdown()
 
+    async def test_the_seed_and_negatives_survive_the_trip_to_the_image_worker(
+        self, world, tmp_path
+    ):
+        """A field added to AssetSpec must not be a field silently dropped on dispatch.
+
+        The payload used to be hand-listed, which would have left images seeded and
+        negated in-process and neither under Celery -- i.e. exactly the deployment that
+        generates them, and a downgrade nothing would have reported.
+        """
+        from app.agents.visual import AssetSpec
+
+        engine = Engine(world, tmp_path, images=True)
+        await engine.start(world)
+        await engine.generation.submit("g1", INTENT, decision=TYPED)
+        await engine.generation.drain()
+
+        session = await engine.games.get("g1")
+        specs = [
+            spec
+            for step in session.steps
+            for spec in engine.visual.specs_for(step.visual)
+            if step.visual
+        ]
+        assert specs, "the run produced no asset specs to check"
+
+        for spec in specs:
+            # Exactly the round trip generation.py and the worker perform.
+            assert AssetSpec.from_payload(spec.to_payload()) == spec
+            assert spec.seed is not None, f"{spec.cache_key} has no seed"
+            assert spec.negative, f"{spec.cache_key} has no negatives"
+        await engine.generation.shutdown()
+
     async def test_art_that_loses_a_write_race_is_retried_not_dropped(self, world, tmp_path):
         """The per-game lock is process-local, so once the image worker is its own process
         nothing serialises this against a concurrent save. Dropping the conflict would mean

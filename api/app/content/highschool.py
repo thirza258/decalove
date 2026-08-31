@@ -15,7 +15,10 @@ AIKO = Character(
         "for help. Warms up slowly, and when she does she teases. Terrified of being a burden."
     ),
     speech="Careful, complete sentences. Trails off when flustered. Uses your name when she is serious.",
-    appearance="long black hair tied back, sharp brown eyes, uniform worn precisely, red ribbon",
+    appearance=(
+        "slender, average height, long straight black hair tied back in a low ponytail, "
+        "sharp dark brown eyes, pale skin, neat red ribbon at the collar, uniform worn precisely"
+    ),
     likes=("tidy handwriting", "the rooftop at sunset", "stray cats", "being relied on"),
     dislikes=("being pitied", "loud crowds", "unfinished paperwork"),
     secret="She has been covering her older brother's abandoned club duties for a year and is exhausted.",
@@ -45,7 +48,10 @@ REN = Character(
         "and uses jokes to avoid being noticed back. Loyal in a way they would never say out loud."
     ),
     speech="Loose and playful. Fragments. Answers a serious question with a question, once, then relents.",
-    appearance="messy ash-blond hair, paint on the cuffs, uniform jacket open, headphones around neck",
+    appearance=(
+        "lean and a little tall, messy ash-blond hair with an overgrown fringe, grey-green eyes, "
+        "light freckles, dried paint on the cuffs, uniform jacket worn open, headphones around the neck"
+    ),
     likes=("sketching strangers", "convenience-store coffee", "rain on windows"),
     dislikes=("being told they have potential", "deadlines", "silence that means something"),
     secret="They have already been accepted to an art school in another city and told nobody.",
@@ -75,7 +81,10 @@ MIKA = Character(
         "and then ignores it on purpose. Competitive about things that are not competitions."
     ),
     speech="Fast, casual, lots of exclamation. Nicknames everyone within a day of meeting them.",
-    appearance="short auburn hair with a stubborn cowlick, track jacket over the uniform, taped fingers",
+    appearance=(
+        "athletic build, short auburn hair with a stubborn cowlick, bright amber eyes, "
+        "sun-tanned skin, red track jacket over the uniform, tape on two fingers"
+    ),
     likes=("winning", "melon bread", "morning runs", "dragging people outdoors"),
     dislikes=("waiting", "people who apologise too much", "the library's quiet rule"),
     secret="Her knee is not healing, and she has not told her coach.",
@@ -105,7 +114,10 @@ HARUTO = Character(
         "will do something enormous for you and then refuse to discuss it."
     ),
     speech="Short. Understated. Deadpan jokes delivered without looking up from the page.",
-    appearance="tall, dark hair falling into his eyes, glasses, sleeves rolled to the elbow, always carrying a book",
+    appearance=(
+        "tall and lanky, dark navy-black hair falling into his eyes, dark grey eyes behind "
+        "thin-framed glasses, fair skin, sleeves rolled to the elbow, always carrying a book"
+    ),
     likes=("rain", "second-hand bookshops", "the last train", "being left alone (allegedly)"),
     dislikes=("small talk", "group projects", "being thanked"),
     secret="He has read every book Aiko ever returned to the library, on purpose.",
@@ -249,6 +261,7 @@ HIGH_SCHOOL_ROMANCE = World(
     opening_location="classroom",
     arcs=("prologue", "first_weeks", "festival", "summer", "resolution"),
     art_style="anime visual novel key art, soft cel shading, warm rim light",
+    wardrobe="Japanese high school uniform, navy blazer, white dress shirt",
     safety=(
         "All characters are high-school students; romance stays at the level of a network TV teen drama "
         "-- confessions, hand-holding, an implied kiss at most. Never sexual content.",

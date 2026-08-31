@@ -119,7 +119,7 @@ def generate_assets_task(
     async def _run():
         runtime = await build_runtime(settings)
         try:
-            specs = [AssetSpec(**d) for d in specs_dicts]
+            specs = [AssetSpec.from_payload(d) for d in specs_dicts]
             await runtime.generation._fill_assets(game_id, specs)
             return {"status": "success", "game_id": game_id, "count": len(specs)}
         finally:

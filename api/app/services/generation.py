@@ -346,12 +346,9 @@ class GenerationService:
                     session = await self.games.get(game_id)
                     world_id = session.world_id if session else ""
                     generate_assets_task.delay(
-                        game_id,
-                        [
-                            {"kind": s.kind, "cache_key": s.cache_key, "prompt": s.prompt}
-                            for s in misses
-                        ],
-                        world_id,
+                        game_id=game_id,
+                        specs_dicts=[spec.to_payload() for spec in misses],
+                        world_id=world_id,
                     )
                 except Exception:
                     log.warning("failed to dispatch asset generation to Celery, falling back", exc_info=True)

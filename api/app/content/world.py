@@ -84,6 +84,10 @@ class World:
     opening_location: str
     arcs: tuple[str, ...] = ("prologue",)
     art_style: str = "anime visual novel key art, soft cel shading"
+    #: What everyone in this world is wearing, emitted in every character prompt. Shared
+    #: rather than repeated per character so the cast cannot drift into four different
+    #: schools -- each character's own ``appearance`` then reads as a variation on it.
+    wardrobe: str = ""
     #: Content boundaries handed to every generation call (PRD §28).
     safety: tuple[str, ...] = ()
 

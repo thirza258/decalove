@@ -321,8 +321,25 @@ class OpenRouterImage(_OpenRouterBase):
         super().__init__(**kwargs)
         self._model = model
 
-    async def generate(self, prompt: str, *, width: int = 1024, height: int = 576) -> tuple[bytes, str]:
-        data = await self._post("/images", {"model": self._model, "prompt": prompt}, ImageError)
+    async def generate(
+        self,
+        prompt: str,
+        *,
+        width: int = 1024,
+        height: int = 576,
+        seed: int | None = None,
+        negative: str | None = None,
+    ) -> tuple[bytes, str]:
+        payload: dict[str, Any] = {"model": self._model, "prompt": prompt}
+        if seed is not None:
+            # Sent as a hint. Routes that support it hold the subject steady across
+            # requests; routes that do not drop the unknown field rather than erroring,
+            # which is why it is not gated on the model.
+            payload["seed"] = seed
+        # `negative` is deliberately not folded into the prompt: this endpoint has no
+        # negative field, and naming what you do not want in the prompt itself is how you
+        # get it drawn.
+        data = await self._post("/images", payload, ImageError)
         if data.get("error"):
             raise ImageError(f"OpenRouter image error: {data['error']}")
         items = data.get("data") or []

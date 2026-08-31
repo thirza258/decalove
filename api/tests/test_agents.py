@@ -8,7 +8,7 @@ from app.agents.memory_agent import MemoryAgent
 from app.agents.visual import VisualAgent
 from app.domain.enums import Risk, StepType
 from app.domain.intent import PlayerIntent
-from app.domain.story import DialogueLine, GeneratedStep, MemoryProposal
+from app.domain.story import DialogueLine, GeneratedStep, MemoryProposal, VisualSpec
 from app.llm.embeddings import HashingEmbedding
 from app.repositories.memory_repo import InMemoryMemoryRepository
 
@@ -113,6 +113,151 @@ class TestVisualAgent:
         )
         spec = agent.normalise(step, session)
         assert spec.expression in world.character("aiko").expressions
+
+
+class TestCharacterConsistency:
+    """Whether Aiko is recognisably one person across a playthrough.
+
+    A generated image is only as stable as the request behind it, so every field allowed
+    to vary is a field that can hand back somebody else.
+    """
+
+    @staticmethod
+    def _step(expression: str = "happy", location: str = "rooftop", pose: str | None = None):
+        return GeneratedStep(
+            type="dialogue",
+            location=location,
+            dialogue=DialogueLine(speaker="aiko", text="."),
+            emotion={"aiko": expression},
+            visual=VisualSpec(background=location, character="aiko", pose=pose),
+        )
+
+    def _sprite(self, agent, session, **kw):
+        session.world.location = kw.get("location", "rooftop")
+        session.world.time_of_day = kw.pop("time", "sunset")
+        return agent.character_spec(agent.normalise(self._step(**kw), session))
+
+    def test_one_sprite_per_expression_whatever_the_scene(self, world, session):
+        """The sprite is background-removed and composited over separate scenery, so the
+        place and hour are thrown away *after* re-lighting and re-framing the character.
+        Keying on them made ~670 independently generated sprites where 28 would do.
+        """
+        agent = VisualAgent(world)
+        rooftop = self._sprite(agent, session, location="rooftop", time="sunset")
+        classroom = self._sprite(agent, session, location="classroom", time="morning")
+
+        assert rooftop.cache_key == classroom.cache_key
+        assert rooftop.prompt == classroom.prompt
+        # The background still varies with the scene -- it is the thing being looked at.
+        session.world.location, session.world.time_of_day = "rooftop", "sunset"
+        sunset_bg = agent.background_spec(agent.normalise(self._step(), session))
+        session.world.time_of_day = "night"
+        night_bg = agent.background_spec(agent.normalise(self._step(), session))
+        assert sunset_bg.cache_key != night_bg.cache_key
+
+    def test_every_expression_of_a_character_shares_a_seed(self, world, session):
+        """Same starting noise, different clause: the same face wearing two moods."""
+        agent = VisualAgent(world)
+        happy = self._sprite(agent, session, expression="happy")
+        sad = self._sprite(agent, session, expression="sad")
+
+        assert happy.seed == sad.seed is not None
+        assert happy.cache_key != sad.cache_key, "the expressions collapsed into one image"
+        assert "happy expression" in happy.prompt and "sad expression" in sad.prompt
+
+    def test_different_characters_do_not_share_a_seed(self, world, session):
+        agent = VisualAgent(world)
+        session.world.location = "classroom"
+        others = {
+            agent.character_spec(
+                agent.normalise(
+                    GeneratedStep(
+                        type="dialogue",
+                        location="classroom",
+                        dialogue=DialogueLine(speaker=cid, text="."),
+                        visual=VisualSpec(background="classroom", character=cid),
+                    ),
+                    session,
+                )
+            ).seed
+            for cid in world.character_ids
+        }
+        assert len(others) == len(world.character_ids), "two characters would start from one face"
+
+    def test_the_background_seed_follows_the_place_not_the_hour(self, world, session):
+        """The rooftop at noon and at sunset should be one rooftop in two lights."""
+        agent = VisualAgent(world)
+        session.world.location = "rooftop"
+        session.world.time_of_day = "sunset"
+        sunset = agent.background_spec(agent.normalise(self._step(), session))
+        session.world.time_of_day = "noon"
+        noon = agent.background_spec(agent.normalise(self._step(), session))
+        assert sunset.seed == noon.seed is not None
+
+    def test_an_invented_pose_is_dropped(self, world, session):
+        """`expression` was always a closed set; `pose` was free text off the model, which
+        re-opened the same hole through a different field.
+        """
+        agent = VisualAgent(world, character_pose_variants=True)
+        spec = agent.normalise(self._step(pose="leaning against the vending machine"), session)
+        assert spec.pose is None
+
+        from app.domain.enums import POSES
+
+        allowed = agent.normalise(self._step(pose=POSES[1]), session)
+        assert allowed.pose == POSES[1]
+
+    def test_pose_variants_are_off_by_default(self, world, session):
+        """Off keeps the set at character x expression -- the smallest, steadiest one."""
+        agent = VisualAgent(world)
+        from app.domain.enums import POSES
+
+        with_pose = self._sprite(agent, session, pose=POSES[1])
+        without = self._sprite(agent, session)
+        assert with_pose.cache_key == without.cache_key
+
+    def test_identity_leads_the_prompt(self, world, session):
+        """What the model reads earliest is what it commits to hardest, so the parts that
+        must not drift go first and the one clause that should differ goes after.
+        """
+        agent = VisualAgent(world)
+        prompt = self._sprite(agent, session, expression="sad").prompt
+        character = world.character("aiko")
+        assert prompt.startswith(f"{character.name}, {character.age} year old student")
+        assert prompt.index(character.appearance) < prompt.index("sad expression")
+
+    def test_the_salt_rerolls_the_whole_cast(self, world, session):
+        agent, resalted = VisualAgent(world), VisualAgent(world, seed_salt="take-two")
+        assert self._sprite(agent, session).seed != self._sprite(resalted, session).seed
+
+    def test_seeding_can_be_turned_off(self, world, session):
+        agent = VisualAgent(world, deterministic_seed=False)
+        assert self._sprite(agent, session).seed is None
+
+    def test_scene_context_is_available_but_off(self, world, session):
+        """Kept as an escape hatch, not a supported mode: it is what made a sprite set
+        multiply by every location and hour in the game.
+        """
+        legacy = VisualAgent(world, character_scene_context=True)
+        rooftop = self._sprite(legacy, session, location="rooftop", time="sunset")
+        classroom = self._sprite(legacy, session, location="classroom", time="morning")
+        assert rooftop.cache_key != classroom.cache_key
+
+    def test_sprites_and_backgrounds_suppress_different_things(self, world, session):
+        agent = VisualAgent(world, negative_prompt="lowres")
+        sprite = self._sprite(agent, session)
+        background = agent.background_spec(agent.normalise(self._step(), session))
+
+        assert "background scenery" in sprite.negative
+        assert "people" in background.negative
+        # The deployment-wide terms are appended to both.
+        assert sprite.negative.endswith("lowres") and background.negative.endswith("lowres")
+
+    def test_a_style_override_replaces_the_world_default(self, world, session):
+        agent = VisualAgent(world, style_prompt="ink wash, muted palette")
+        prompt = self._sprite(agent, session).prompt
+        assert prompt.endswith("ink wash, muted palette")
+        assert world.art_style not in prompt
 
 
 class TestMemory:

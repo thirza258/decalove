@@ -99,6 +99,38 @@ class Settings(BaseSettings):
     IMAGE_BACKEND: str = "openrouter"
     IMAGE_WIDTH: int = 1024
     IMAGE_HEIGHT: int = 576
+
+    # -- Visual consistency ----------------------------------------------------------
+    # Making the same character look like the same person is mostly a matter of asking
+    # for the same picture: identical prompt, identical starting noise, and as few
+    # distinct images per character as the story can get away with.
+
+    #: Derive each image's seed from *what it is of* -- the character or the location --
+    #: rather than letting the sampler pick. Every picture of Aiko then starts from the
+    #: same noise, which is the single biggest lever on whether she is recognisably one
+    #: person across a playthrough. Ignored by backends with no seed control.
+    IMAGE_DETERMINISTIC_SEED: bool = True
+    #: Changes every derived seed at once: a new cast, same prompts. Cosmetic, but the
+    #: only way to reroll a look you dislike without editing prompts.
+    IMAGE_SEED_SALT: str = ""
+    #: Appended to every image prompt, so backgrounds and sprites come from one art
+    #: direction. Empty falls back to the world's own ``art_style``.
+    IMAGE_STYLE_PROMPT: str = ""
+    #: Suppressed in every image. The defaults are consistency terms, not taste: extra
+    #: figures and mismatched faces are what make a cast look like different people.
+    IMAGE_NEGATIVE_PROMPT: str = (
+        "multiple people, crowd, extra faces, extra limbs, deformed hands, "
+        "inconsistent style, watermark, signature, text, blurry, lowres"
+    )
+    #: Let a sprite be re-drawn for the place and hour it appears in. Off by design:
+    #: the sprite is background-removed and composited over separately generated
+    #: scenery, so scene context is thrown away *after* it has re-lit and re-framed the
+    #: character -- which is exactly the drift this section exists to stop. Turning it on
+    #: also multiplies the sprite set by every location and time of day.
+    IMAGE_CHARACTER_SCENE_CONTEXT: bool = False
+    #: Let the writer vary a sprite's pose (from the closed POSES set). Off keeps it to
+    #: one image per character per expression, which is the smallest and steadiest set.
+    IMAGE_CHARACTER_POSE_VARIANTS: bool = False
     #: Very low generation probability for new unseen images (5%); mostly generates text and reuses existing art.
     IMAGE_GENERATION_PROBABILITY: float = 0.05
 

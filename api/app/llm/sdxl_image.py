@@ -183,11 +183,21 @@ def _generate_sync(
     num_inference_steps: int,
     guidance_scale: float,
     negative_prompt: str,
+    seed: int | None = None,
 ) -> bytes:
     """Run inference synchronously (called inside a worker thread)."""
     import torch
 
     with _INFERENCE_LOCK, torch.no_grad():
+        generator = None
+        if seed is not None:
+            # The whole point of the seed: identical noise for every image of one subject,
+            # so the sampler starts each of Aiko's expressions from the same face. Built on
+            # the pipeline's own device, or diffusers rejects the mismatch -- and built
+            # under the lock, because reading pipe.device while another thread is mid-pass
+            # on the same pipeline is a question not worth leaving open.
+            generator = torch.Generator(device=pipe.device).manual_seed(int(seed))
+
         result = pipe(
             prompt=prompt,
             negative_prompt=negative_prompt or None,
@@ -195,6 +205,7 @@ def _generate_sync(
             height=height,
             num_inference_steps=num_inference_steps,
             guidance_scale=guidance_scale,
+            generator=generator,
         )
     image = result.images[0]
 
@@ -275,7 +286,13 @@ class SDXLImageProvider:
         return self._pipe
 
     async def generate(
-        self, prompt: str, *, width: int = 1024, height: int = 576
+        self,
+        prompt: str,
+        *,
+        width: int = 1024,
+        height: int = 576,
+        seed: int | None = None,
+        negative: str | None = None,
     ) -> tuple[bytes, str]:
         """Return ``(png_bytes, 'image/png')`` or raise ``ImageError``."""
         try:
@@ -286,6 +303,10 @@ class SDXLImageProvider:
         # SDXL requires dimensions divisible by 8.
         width = (width // 8) * 8
         height = (height // 8) * 8
+
+        # The per-image negatives lead; SDXL_NEGATIVE_PROMPT is appended as this
+        # deployment's own extra terms.
+        negative_prompt = ", ".join(part for part in (negative, self._negative_prompt) if part)
 
         loop = asyncio.get_running_loop()
         try:
@@ -299,7 +320,8 @@ class SDXLImageProvider:
                     height,
                     self._num_inference_steps,
                     self._guidance_scale,
-                    self._negative_prompt,
+                    negative_prompt,
+                    seed,
                 ),
             )
         except Exception as exc:

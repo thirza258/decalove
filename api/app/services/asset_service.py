@@ -105,7 +105,11 @@ class AssetService:
 
         try:
             data, content_type = await self.image.generate(
-                spec.prompt, width=self.width, height=self.height
+                spec.prompt,
+                width=self.width,
+                height=self.height,
+                seed=spec.seed,
+                negative=spec.negative or None,
             )
             if spec.kind == "character":
                 data = make_transparent_character_png(data)

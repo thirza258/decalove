@@ -39,8 +39,21 @@ class ChatProvider(Protocol):
 class ImageProvider(Protocol):
     name: str
 
-    async def generate(self, prompt: str, *, width: int = 1024, height: int = 576) -> tuple[bytes, str]:
-        """Return ``(image_bytes, content_type)``, or raise ``ImageError``."""
+    async def generate(
+        self,
+        prompt: str,
+        *,
+        width: int = 1024,
+        height: int = 576,
+        seed: int | None = None,
+        negative: str | None = None,
+    ) -> tuple[bytes, str]:
+        """Return ``(image_bytes, content_type)``, or raise ``ImageError``.
+
+        ``seed`` fixes the starting noise so the same subject comes back looking like
+        itself; ``negative`` names what to suppress. Both are hints -- a backend that
+        cannot honour them ignores them rather than failing.
+        """
         ...
 
 

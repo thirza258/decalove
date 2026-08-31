@@ -69,6 +69,12 @@ RELATIONSHIP_AXES: tuple[str, ...] = (
 
 TIMES_OF_DAY: tuple[str, ...] = ("morning", "noon", "afternoon", "sunset", "evening", "night")
 
+#: The poses a character sprite may be drawn in. Closed for the same reason the expression
+#: set is: every distinct value is a separate image of the same person, generated
+#: independently, and an open field means the writer can invent "leaning against the
+#: vending machine, half-turned" and get back somebody who does not look like Aiko.
+POSES: tuple[str, ...] = ("standing", "arms crossed", "hands behind back", "leaning")
+
 WEEKDAYS: tuple[str, ...] = (
     "Monday",
     "Tuesday",
