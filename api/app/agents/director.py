@@ -124,30 +124,50 @@ class DirectorAgent:
         self.temperature = temperature
         self.ending_min_steps = ending_min_steps
 
-    async def parse(self, session: GameSession, raw: str) -> PlayerIntent:
+    def parse_fast(self, session: GameSession, raw: str) -> tuple[PlayerIntent, bool]:
+        """An intent with no network round-trip, and whether the model could do better.
+
+        Split out of ``parse`` so the HTTP handler can answer 202 without waiting on a
+        model. Everything here is local -- the empty check, the safety screen, the keyword
+        lexicon -- so it costs microseconds, and the caller decides whether the refinement
+        is worth a second or two on the player's click path or belongs in a worker.
+        """
         text = (raw or "").strip()
         if not text:
-            return PlayerIntent(action="observe", risk=Risk.low, summary="", meaningful=False, raw=raw)
+            return (
+                PlayerIntent(action="observe", risk=Risk.low, summary="", meaningful=False, raw=raw),
+                False,
+            )
 
         usable, verdict = self.safety.screen_input(text)
         if not usable:
             # Absorbed in-world rather than rejected: the story continues, the attempt does not.
+            # Screening stays on the fast path deliberately: input that fails it must not
+            # reach the model at all, in a worker or anywhere else.
             log.info("player input screened out (%s)", verdict.reason)
-            return PlayerIntent(
-                action="observe",
-                risk=Risk.low,
-                summary="the moment passes without anything being said",
-                meaningful=False,
-                raw=text,
+            return (
+                PlayerIntent(
+                    action="observe",
+                    risk=Risk.low,
+                    summary="the moment passes without anything being said",
+                    meaningful=False,
+                    raw=text,
+                ),
+                False,
             )
 
-        if self.chat is not None:
-            try:
-                return await self._parse_with_llm(session, text)
-            except (LLMError, ValueError) as exc:
-                log.warning("intent parse via LLM failed, using keyword parser: %s", exc)
+        return self.parse_keywords(session, text), self.chat is not None
 
-        return self.parse_keywords(session, text)
+    async def parse(self, session: GameSession, raw: str) -> PlayerIntent:
+        keyword_intent, refinable = self.parse_fast(session, raw)
+        if not refinable:
+            return keyword_intent
+
+        try:
+            return await self._parse_with_llm(session, (raw or "").strip())
+        except (LLMError, ValueError) as exc:
+            log.warning("intent parse via LLM failed, using keyword parser: %s", exc)
+            return keyword_intent
 
     async def _parse_with_llm(self, session: GameSession, text: str) -> PlayerIntent:
         assert self.chat is not None

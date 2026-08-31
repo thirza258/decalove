@@ -66,9 +66,9 @@ committed code chose differently, and those choices are kept.
 |---|---|---|
 | PostgreSQL | **MongoDB** | Committed from the start; the story-step ledger is document-shaped. Persistence sits behind a repository protocol, so Postgres remains a swap, not a rewrite. |
 | pgvector / vector DB | **In-process cosine similarity** over stored embeddings | MongoDB 7 *community* has no `$vectorSearch` (Atlas-only), and the compose file runs the community image. At MVP scale (4 characters, tens of memories per save) a full scan is faster than a network hop and removes an infra dependency. |
-| Redis + background workers | **In-process `asyncio` tasks (default) + Celery/Redis worker support** | Single-node runs with zero dependencies via `asyncio`; distributed environments switch seamlessly to Celery + Redis workers via `TASK_QUEUE_BACKEND=celery`. |
+| Redis + background workers | **In-process `asyncio` tasks (default) + Celery/Redis worker support, split across two queues** | Single-node runs with zero dependencies via `asyncio`; distributed environments switch to Celery + Redis via `TASK_QUEUE_BACKEND=celery`. Story and image work are routed to separate queues (`story`, `images`) and consumed by separate workers: prose is an API call measured in seconds, art is a GPU pass measured in minutes, and on one queue the art head-of-line blocks the prose. See `api/app/tasks/celery_app.py`. |
 | Object storage / CDN | **MinIO**, with a local-filesystem store as fallback | MinIO was committed; the local store means the game runs with no Docker at all. |
-| Image models via OpenRouter only | **Three image backends**: OpenRouter, local SDXL on GPU, deterministic placeholder | Local SDXL (stabilityai/stable-diffusion-xl-base-1.0 via diffusers) removes per-image API cost and works with no key; the placeholder keeps the whole pipeline exercisable with nothing installed. The provider is chosen by `IMAGE_BACKEND`. |
+| Image models via OpenRouter only | **Three image backends**: OpenRouter, local SDXL on GPU, deterministic placeholder — composable into a fallback chain | Local SDXL (stabilityai/stable-diffusion-xl-base-1.0 via diffusers) removes per-image API cost and works with no key; the placeholder keeps the whole pipeline exercisable with nothing installed. `IMAGE_BACKEND` is an ordered chain (`sdxl,openrouter`), so the two backends cover each other's outages — a GPU lost to a driver upgrade and a rate-limited hosted model are unrelated failures. See `api/app/llm/fallback_image.py`. |
 | Ten-step generation | **20-step batches, decision point at step 10–15** | See §5. |
 
 **Embeddings**: OpenRouter is a chat/completions gateway and does not expose an
@@ -796,12 +796,18 @@ save. Locally the default stays `auto`, which is what makes a bare clone runnabl
 ```bash
 cp api/.env.example api/.env
 # set OPENROUTER_API_KEY=sk-or-...
-# IMAGE_GENERATION_ENABLED=True   +  IMAGE_BACKEND=openrouter | sdxl
+# IMAGE_GENERATION_ENABLED=True   +  IMAGE_BACKEND=openrouter | sdxl | sdxl,openrouter
 ```
+
+`IMAGE_BACKEND` is an ordered chain: the first backend that returns an image wins, so
+`sdxl,openrouter` renders on the local GPU and falls back to the hosted API when the GPU
+is absent or the pass fails. An unknown name fails the process at boot.
 
 For local SDXL: `python download_model.py` once (weights land in `api/models/sdxl`),
 then `IMAGE_BACKEND=sdxl` with `SDXL_OFFLINE_MODE=True`. No OpenRouter key is needed
-for images in that mode. `scripts/generate_opening_assets.py`,
+for images in that mode. Under Docker, add
+`COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml` to `api/.env` — the base compose
+file reserves no GPU, so the stack starts on hosts that have none. `scripts/generate_opening_assets.py`,
 `scripts/generate_asset_variations.py` and `scripts/generate_menu_background.py`
 pre-generate art into the client's `game/images/`.
 

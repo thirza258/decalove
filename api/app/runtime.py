@@ -28,6 +28,7 @@ from app.content.world import World
 from app.database import close_mongo_connection, get_db, try_connect
 from app.llm.base import ChatProvider, EmbeddingProvider, ImageProvider
 from app.llm.embeddings import HashingEmbedding, HttpEmbedding
+from app.llm.fallback_image import FallbackImageProvider
 from app.llm.openrouter import OpenRouterChat, OpenRouterImage
 from app.llm.placeholder_image import PlaceholderImageProvider
 from app.llm.sdxl_image import SDXLImageProvider
@@ -146,14 +147,64 @@ def _build_asset_store(settings: Settings) -> tuple[AssetStore, str]:
     return LocalAssetStore(root), "local"
 
 
+def _build_image_chain(settings: Settings, openrouter: dict[str, Any]) -> ImageProvider:
+    """Assemble ``IMAGE_BACKEND`` into one provider.
+
+    Entries this deployment cannot serve are dropped here, at boot, with a warning --
+    an ``openrouter`` link with no API key would otherwise cost a round-trip per image to
+    discover, on every image, forever. A chain of one is returned unwrapped so ``/health``
+    keeps naming the backend rather than a wrapper.
+    """
+    providers: list[ImageProvider] = []
+    for backend in settings.image_backends:
+        if backend == "openrouter":
+            if not settings.has_llm:
+                log.warning(
+                    "IMAGE_BACKEND lists 'openrouter' but OPENROUTER_API_KEY is unset - "
+                    "dropping it from the chain."
+                )
+                continue
+            providers.append(OpenRouterImage(model=settings.OPENROUTER_IMAGE_MODEL, **openrouter))
+        elif backend == "sdxl":
+            # Runs locally: no API key, and the weights load lazily on the first image, so
+            # a chain that never reaches this link costs nothing to have declared.
+            providers.append(
+                SDXLImageProvider(
+                    model_id=settings.SDXL_MODEL_ID,
+                    model_dir=settings.SDXL_MODEL_DIR,
+                    device=settings.SDXL_DEVICE,
+                    torch_dtype=settings.SDXL_TORCH_DTYPE,
+                    num_inference_steps=settings.SDXL_NUM_INFERENCE_STEPS,
+                    guidance_scale=settings.SDXL_GUIDANCE_SCALE,
+                    negative_prompt=settings.SDXL_NEGATIVE_PROMPT,
+                    enable_attention_slicing=settings.SDXL_ATTENTION_SLICING,
+                    enable_vae_tiling=settings.SDXL_VAE_TILING,
+                    offline_mode=settings.SDXL_OFFLINE_MODE,
+                )
+            )
+        elif backend == "placeholder":
+            providers.append(PlaceholderImageProvider())
+
+    if not providers:
+        log.warning(
+            "no usable image backend in IMAGE_BACKEND=%r - falling back to the placeholder "
+            "generator, which keeps the whole asset pipeline exercisable offline.",
+            settings.IMAGE_BACKEND,
+        )
+        return PlaceholderImageProvider()
+    if len(providers) == 1:
+        return providers[0]
+    return FallbackImageProvider(providers)
+
+
 def _build_providers(
     settings: Settings,
 ) -> tuple[ChatProvider | None, ImageProvider | None, EmbeddingProvider]:
     chat: ChatProvider | None = None
-    image: ImageProvider | None = None
+    openrouter: dict[str, Any] = {}
 
     if settings.has_llm:
-        common = {
+        openrouter = {
             "api_key": settings.OPENROUTER_API_KEY,
             "base_url": settings.OPENROUTER_BASE_URL,
             "timeout": settings.OPENROUTER_TIMEOUT_S,
@@ -164,35 +215,21 @@ def _build_providers(
         chat = OpenRouterChat(
             model=settings.OPENROUTER_MODEL,
             require_parameters=settings.OPENROUTER_REQUIRE_PARAMETERS,
-            **common,
+            **openrouter,
         )
-        if settings.IMAGE_GENERATION_ENABLED and settings.IMAGE_BACKEND == "openrouter":
-            image = OpenRouterImage(model=settings.OPENROUTER_IMAGE_MODEL, **common)
     else:
         log.warning(
             "No OPENROUTER_API_KEY set - running on the scripted narrator. "
             "The game is fully playable; the prose is authored, not generated."
         )
 
-    # SDXL backend runs locally — it does not need an OpenRouter API key.
-    if settings.IMAGE_GENERATION_ENABLED and settings.IMAGE_BACKEND == "sdxl":
-        image = SDXLImageProvider(
-            model_id=settings.SDXL_MODEL_ID,
-            model_dir=settings.SDXL_MODEL_DIR,
-            device=settings.SDXL_DEVICE,
-            torch_dtype=settings.SDXL_TORCH_DTYPE,
-            num_inference_steps=settings.SDXL_NUM_INFERENCE_STEPS,
-            guidance_scale=settings.SDXL_GUIDANCE_SCALE,
-            negative_prompt=settings.SDXL_NEGATIVE_PROMPT,
-            enable_attention_slicing=settings.SDXL_ATTENTION_SLICING,
-            enable_vae_tiling=settings.SDXL_VAE_TILING,
-            offline_mode=settings.SDXL_OFFLINE_MODE,
-        )
-
-    if image is None:
-        # Still wired up: with IMAGE_GENERATION_ENABLED=true and no key, the whole asset
-        # pipeline stays exercisable offline.
-        image = PlaceholderImageProvider()
+    image: ImageProvider = (
+        _build_image_chain(settings, openrouter)
+        if settings.IMAGE_GENERATION_ENABLED
+        # Constructed either way so the seam is never None, but nothing calls it:
+        # AssetService.enabled is what gates generation.
+        else PlaceholderImageProvider()
+    )
 
     if settings.EMBEDDING_BACKEND == "http" and settings.EMBEDDING_API_KEY:
         embedder: EmbeddingProvider = HttpEmbedding(

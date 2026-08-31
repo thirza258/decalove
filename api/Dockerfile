@@ -4,15 +4,18 @@
 # so PyTorch/CUDA wheels are not downloaded on every build.
 FROM pytorch/pytorch:latest
 
+# Only what describes *this image's* filesystem layout -- the paths the RUN below
+# creates and the volumes mount over. Everything else the app reads is a setting, and
+# settings live in app/config.py with .env as the single place to override them; baking
+# them in here would silently shadow both. Service addresses in particular describe a
+# compose network the image knows nothing about, so docker-compose.yml sets those.
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     DEBIAN_FRONTEND=noninteractive \
-    # Inside compose, MongoDB and MinIO are reachable by service name.
-    MONGODB_URL=mongodb://root:rootpassword@mongodb:27017 \
-    MINIO_ENDPOINT=minio:9000 \
     LOCAL_ASSET_DIR=/data/assets \
     # SDXL weights are stored under /srv/api/models/sdxl (a mounted volume).
     # Point HF_HOME there so diffusers never writes to ~/.cache.
+    SDXL_MODEL_DIR=/srv/api/models/sdxl \
     HF_HOME=/srv/api/models/sdxl \
     TRANSFORMERS_CACHE=/srv/api/models/sdxl
 

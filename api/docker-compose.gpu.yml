@@ -1,0 +1,29 @@
+## GPU overlay for local SDXL image generation.
+##
+## Kept out of docker-compose.yml so the stack comes up on a host with no NVIDIA card --
+## IMAGE_BACKEND=openrouter needs no GPU, and a reservation Docker cannot satisfy fails the
+## whole `up`, not just the one service.
+##
+## Turn it on the same way you choose the backend, in api/.env:
+##
+##   IMAGE_BACKEND=sdxl,openrouter
+##   COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml
+##
+## Compose reads COMPOSE_FILE from .env, so plain `docker compose up -d` then includes
+## this file. (The separator is ":" on Linux and macOS, ";" on Windows.) Or pass it by
+## hand: docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+##
+## Requires the NVIDIA Container Toolkit (nvidia-container-toolkit) on the host.
+
+services:
+  worker-images:
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

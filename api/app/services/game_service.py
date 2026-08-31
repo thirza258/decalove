@@ -468,7 +468,12 @@ class GameService:
             current.played()
             await self.games.save(current)
 
-        intent = await self.director.parse(session, text)
+        # Keyword parse only. The model's refinement of the intent happens in the worker
+        # (see GenerationService._run_batch): it is one more LLM round-trip, and running it
+        # here held the player's client on a blocking POST before it could start polling
+        # for the story at all -- latency the queue split cannot remove because it is not
+        # on a queue.
+        intent, refinable = self.director.parse_fast(session, text)
         head = session.current_step
         decision = DecisionContext(
             kind=DecisionKind.free_text,
@@ -489,10 +494,20 @@ class GameService:
                 raise GameNotFound(game_id)
             current.history.append(f'{current.player.name} typed: "{text.strip()[:160]}"')
             current.played()
-            current.style.record(kind=decision.kind, risk=intent.risk.value, target=intent.target)
+            if not refinable:
+                # With no model to refine it, the keyword intent is the final one. When
+                # there is one, the worker records the style instead, from the refined
+                # intent -- PlayerStyle.targets is what picks the ending (agents/ending.py),
+                # so grading typed input on the keyword parse would quietly change who the
+                # player ends up with.
+                current.style.record(
+                    kind=decision.kind, risk=intent.risk.value, target=intent.target
+                )
             await self.games.save(current)
 
-        batch = await self.generation.submit(game_id, intent, decision=decision)
+        batch = await self.generation.submit(
+            game_id, intent, decision=decision, refine_input=text if refinable else None
+        )
         return batch, intent
 
     async def submit_choice(

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import time
 
+import pytest
+
 TIMEOUT_S = 15.0
 
 
@@ -189,6 +191,44 @@ class TestNaturalLanguage:
     def test_empty_input_is_a_validation_error(self, client):
         game_id = new_game(client)["game_id"]
         assert client.post(f"/api/v1/games/{game_id}/actions", json={"input": ""}).status_code == 422
+
+    @pytest.mark.parametrize("with_model", [False, True], ids=["scripted", "refined"])
+    def test_a_typed_turn_is_graded_exactly_once(self, client, monkeypatch, with_model):
+        """The style record moved to the worker when there is a model to refine the intent,
+        and stays in the handler when there is not. "Exactly once" is a property of the
+        pair, so both branches are exercised -- PlayerStyle drives the director's read of
+        the player and, through targets, which ending they get.
+        """
+        import asyncio
+
+        from app.domain.intent import PlayerIntent
+
+        runtime = client.app.state.runtime
+        director = runtime.game_service.director
+
+        if with_model:
+            # parse_fast reports a turn as refinable only when a chat provider exists.
+            # A sentinel is enough: nothing else on the director reads .chat, and the
+            # stubbed parse means _parse_with_llm is never reached.
+            monkeypatch.setattr(director, "chat", object())
+
+            async def refined(session, raw):
+                return PlayerIntent(action="invite_character", target="aiko", risk="low", raw=raw)
+
+            monkeypatch.setattr(director, "parse", refined)
+
+        game_id = new_game(client)["game_id"]
+        drain_to_decision(client, game_id)
+
+        client.post(
+            f"/api/v1/games/{game_id}/actions",
+            json={"input": "I ask Aiko if she wants to walk home with me."},
+        )
+        drain_to_decision(client, game_id)
+
+        style = asyncio.run(runtime.games.get(game_id)).style
+        assert style.typed == 1, f"the turn was graded {style.typed} times"
+        assert style.targets.get("aiko") == 1
 
 
 class TestStateOwnership:

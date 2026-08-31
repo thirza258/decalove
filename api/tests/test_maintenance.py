@@ -339,12 +339,12 @@ class TestPlayClock:
 class TestARequestInFlight:
     """The window the sweeper's under-lock re-check does not cover on its own.
 
-    `submit_action` parses intent before it takes the lock, and with an API key that
-    parse is a multi-second model call. A player returning after eight days sits in that
+    A player returning after eight days must stop being a collection candidate the moment
+    their request arrives, not once the turn has been queued -- otherwise they sit in that
     window with a save the collector still considers abandoned.
     """
 
-    def test_typing_a_line_stamps_the_play_clock_before_the_slow_parse(self, client, monkeypatch):
+    def test_typing_a_line_stamps_the_play_clock_before_the_turn_is_queued(self, client, monkeypatch):
         import asyncio
 
         runtime = client.app.state.runtime
@@ -359,38 +359,43 @@ class TestARequestInFlight:
         asyncio.run(backdate())
 
         seen: dict[str, datetime] = {}
-        original = runtime.game_service.director.parse
+        original = runtime.generation.submit
 
-        async def slow_parse(session, text):
-            # Stands in for the OpenRouter round trip. By the time the parse runs, the
-            # play clock must already say the player is back.
+        async def slow_submit(submitted_id, intent, **kwargs):
+            # The last thing submit_action does, and the point past which the turn is the
+            # worker's problem. By the time the request gets here the play clock must
+            # already say the player is back.
             stored = await repository.get(game_id)
-            seen["at_parse_time"] = stored.last_played_at
-            return await original(session, text)
+            seen["at_submit_time"] = stored.last_played_at
+            return await original(submitted_id, intent, **kwargs)
 
-        monkeypatch.setattr(runtime.game_service.director, "parse", slow_parse)
+        monkeypatch.setattr(runtime.generation, "submit", slow_submit)
         client.post(f"/api/v1/games/{game_id}/actions", json={"input": "I say hello"})
 
-        assert seen["at_parse_time"] > datetime.now(timezone.utc) - timedelta(minutes=1), (
+        assert seen["at_submit_time"] > datetime.now(timezone.utc) - timedelta(minutes=1), (
             "the save was still a collection candidate while the player's request was in flight"
         )
 
     def test_a_save_deleted_underneath_a_request_answers_404_not_202(self, client, monkeypatch):
         """A cheerful 202 with a null batch id tells the player their line landed when it
         did not, and the next poll 404s anyway."""
-        import asyncio
-
         runtime = client.app.state.runtime
         game_id = client.post("/api/v1/games", json={"player_name": "Kai"}).json()["game_id"]
 
-        original = runtime.game_service.director.parse
+        # The window is between the play-clock stamp at the top of submit_action and the
+        # re-read that appends to history. It used to be the intent parse; that runs in a
+        # worker now, so the delete goes in on the way out of the first save instead.
+        original = runtime.games.save
+        vanished = False
 
-        async def parse_then_vanish(session, text):
-            intent = await original(session, text)
-            await runtime.games.delete(game_id)
-            return intent
+        async def save_then_vanish(session):
+            nonlocal vanished
+            await original(session)
+            if not vanished:
+                vanished = True
+                await runtime.games.delete(game_id)
 
-        monkeypatch.setattr(runtime.game_service.director, "parse", parse_then_vanish)
+        monkeypatch.setattr(runtime.games, "save", save_then_vanish)
         response = client.post(f"/api/v1/games/{game_id}/actions", json={"input": "I say hello"})
 
         assert response.status_code == 404, f"got {response.status_code}: {response.text}"

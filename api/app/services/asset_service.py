@@ -69,16 +69,37 @@ class AssetService:
             url=url or f"{self.api_prefix}/assets/{record.id}/view",
         )
 
-    async def ensure(self, spec: AssetSpec, world_id: str) -> AssetRef:
-        """Return the cached asset, generating it first if necessary."""
+    def wants_generation(self, spec: AssetSpec) -> bool:
+        """Whether an uncached spec is worth generating at all.
+
+        The sampling gate that keeps the story mostly text (PRD §19). Public so it can be
+        rolled at *dispatch* time rather than inside ``ensure``: at the default 5%, gating
+        in the worker meant nineteen of every twenty image jobs claimed a queue slot,
+        built a whole runtime and connected to MongoDB purely to decide to do nothing --
+        while a real image job waited behind them.
+        """
+        if not self.enabled or self.image is None:
+            return False
+        if self.generation_probability >= 1.0:
+            return True
+        if self.generation_probability <= 0.0:
+            return False
+        return random.random() <= self.generation_probability
+
+    async def ensure(self, spec: AssetSpec, world_id: str, *, gated: bool = True) -> AssetRef:
+        """Return the cached asset, generating it first if necessary.
+
+        ``gated=False`` skips the sampling gate, for callers that have already rolled it
+        (or that mean it unconditionally, like the asset pre-generation scripts). Rolling
+        it twice would square the probability.
+        """
         record = await self.repository.by_cache_key(spec.cache_key)
         if record is not None:
             return await self.to_ref(record)
         if not self.enabled or self.image is None:
             return AssetRef(cache_key=spec.cache_key, status=AssetStatus.unavailable)
 
-        # Gate brand new image generation to keep the story mostly text-focused and fast
-        if self.generation_probability < 1.0 and random.random() > self.generation_probability:
+        if gated and not self.wants_generation(spec):
             log.debug("skipping new image generation for %s (probability gate)", spec.cache_key)
             return AssetRef(cache_key=spec.cache_key, status=AssetStatus.unavailable)
 

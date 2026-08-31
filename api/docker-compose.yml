@@ -3,12 +3,59 @@
 ##   docker compose up -d                   full stack, API on :8000
 ##   docker compose up -d mongodb minio     just the infrastructure, run the API locally
 ##
+## Story and image generation run on separate queues and separate workers. Prose is an
+## API call and pictures are a GPU pass, and on one queue the pictures head-of-line block
+## the prose -- see api/app/tasks/celery_app.py. To watch them independently:
+##
+##   docker compose logs -f worker-story
+##   docker compose logs -f worker-images
+##
+## Settings come from .env, which app/config.py already treats as the source of truth.
+## This file sets only what .env cannot know: the addresses of the services below. Adding
+## a tunable here would silently shadow .env for anyone running in Docker.
+##
+## No GPU is reserved by default, so the stack comes up on any host. For local SDXL put
+## this in .env alongside IMAGE_BACKEND=sdxl,... and `docker compose up -d` picks it up:
+##
+##   COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml
+##
 ## The API is playable without either service -- it falls back to in-memory storage
 ## and local asset files -- so this file is a convenience, not a prerequisite.
 
 # Without this the project would be named after the directory ("api"), which makes
 # the built image "api-api" and the network "api_default".
 name: decalove
+
+## Every tunable the app has -- API keys, IMAGE_BACKEND, the SDXL block, generation
+## limits -- comes from .env, unchanged, so there is exactly one file to edit. Optional:
+## with no .env the config.py defaults apply and the stack still boots.
+x-app-env: &app-env
+  env_file:
+    - path: .env
+      required: false
+  environment:
+    # Facts about *this network*, not preferences, which is why they are allowed to
+    # override .env: inside compose these services answer to their service names, and a
+    # .env written for a local run points at localhost.
+    MONGODB_URL: mongodb://root:rootpassword@mongodb:27017
+    MINIO_ENDPOINT: minio:9000
+    REDIS_URL: redis://redis:6379/0
+    CELERY_BROKER_URL: redis://redis:6379/0
+    CELERY_RESULT_BACKEND: redis://redis:6379/0
+    # Required rather than probed: both are reachable by service name here, so a
+    # container that quietly loses every save is worse than one that fails loudly.
+    STORAGE_BACKEND: mongo
+    ASSET_BACKEND: minio
+    # The whole point of this file: work is handed to the workers below.
+    TASK_QUEUE_BACKEND: celery
+
+x-infra-ready: &infra-ready
+  mongodb:
+    condition: service_healthy
+  minio:
+    condition: service_healthy
+  redis:
+    condition: service_healthy
 
 services:
   mongodb:
@@ -71,115 +118,72 @@ services:
     container_name: decalove-api
     ports:
       - "8000:8000"
-    environment:
-      # Both are reachable by service name on the compose network, so require them
-      # rather than letting the API silently fall back to in-memory storage here --
-      # a container that quietly loses every save is worse than one that fails loudly.
-      STORAGE_BACKEND: mongo
-      ASSET_BACKEND: minio
-      TASK_QUEUE_BACKEND: celery
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/0
-      CELERY_RESULT_BACKEND: redis://redis:6379/0
-      MONGODB_URL: mongodb://root:rootpassword@mongodb:27017
-      MINIO_ENDPOINT: minio:9000
-      CORS_ORIGINS: '["*"]'
-      # Put OPENROUTER_API_KEY in a .env file next to this one to enable the LLM.
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-      IMAGE_GENERATION_ENABLED: ${IMAGE_GENERATION_ENABLED:-False}
-      # Set to "sdxl" to use local GPU-based Stable Diffusion XL instead of OpenRouter.
-      IMAGE_BACKEND: ${IMAGE_BACKEND:-openrouter}
-      # SDXL settings (only used when IMAGE_BACKEND=sdxl).
-      SDXL_MODEL_ID: ${SDXL_MODEL_ID:-stabilityai/stable-diffusion-xl-base-1.0}
-      SDXL_DEVICE: ${SDXL_DEVICE:-cuda}
-      SDXL_TORCH_DTYPE: ${SDXL_TORCH_DTYPE:-float16}
-      SDXL_NUM_INFERENCE_STEPS: ${SDXL_NUM_INFERENCE_STEPS:-30}
-      SDXL_GUIDANCE_SCALE: ${SDXL_GUIDANCE_SCALE:-7.5}
-      SDXL_NEGATIVE_PROMPT: ${SDXL_NEGATIVE_PROMPT:-}
-      SDXL_ATTENTION_SLICING: ${SDXL_ATTENTION_SLICING:-True}
-      SDXL_VAE_TILING: ${SDXL_VAE_TILING:-False}
-      # Load from local cache only — no HuggingFace HTTP requests.
-      # Set to False for the first run to download weights, then leave True.
-      SDXL_OFFLINE_MODE: ${SDXL_OFFLINE_MODE:-True}
-      # Weights are stored under /srv/api/models/sdxl (a mounted volume).
-      SDXL_MODEL_DIR: models/sdxl
-      HF_HOME: /srv/api/models/sdxl
-      TRANSFORMERS_CACHE: /srv/api/models/sdxl
-      NVIDIA_VISIBLE_DEVICES: all
-      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    <<: *app-env
     volumes:
       # Only used if ASSET_BACKEND falls back to local.
       - api_assets:/data/assets
-      # Persists downloaded SDXL model weights across container rebuilds.
-      - ./models/sdxl:/srv/api/models/sdxl
-    depends_on:
-      mongodb:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    # Reserve the GPU for SDXL inference. Docker requires the NVIDIA Container
-    # Toolkit (nvidia-container-toolkit) to be installed on the host.
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
+    depends_on: *infra-ready
+    # No GPU and no SDXL weights mounted: with TASK_QUEUE_BACKEND=celery the API never
+    # generates an image, it only enqueues the request. Three services reserving one card
+    # was half the contention the queue split exists to remove.
     restart: unless-stopped
 
-  worker:
+  ## Story generation. Every request a player is actually waiting on comes through here:
+  ## one structured-output call to OpenRouter, seconds, no GPU. Concurrency is set for
+  ## latency rather than throughput -- these tasks are almost entirely network wait.
+  worker-story:
     build:
       context: .
       dockerfile: Dockerfile
     image: decalove-api
-    container_name: decalove-worker
-    command: ["celery", "-A", "app.tasks.celery_app.celery_app", "worker", "--loglevel=info", "--concurrency=2"]
-    environment:
-      STORAGE_BACKEND: mongo
-      ASSET_BACKEND: minio
-      TASK_QUEUE_BACKEND: celery
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/0
-      CELERY_RESULT_BACKEND: redis://redis:6379/0
-      MONGODB_URL: mongodb://root:rootpassword@mongodb:27017
-      MINIO_ENDPOINT: minio:9000
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-      IMAGE_GENERATION_ENABLED: ${IMAGE_GENERATION_ENABLED:-False}
-      IMAGE_BACKEND: ${IMAGE_BACKEND:-openrouter}
-      SDXL_MODEL_ID: ${SDXL_MODEL_ID:-stabilityai/stable-diffusion-xl-base-1.0}
-      SDXL_DEVICE: ${SDXL_DEVICE:-cuda}
-      SDXL_TORCH_DTYPE: ${SDXL_TORCH_DTYPE:-float16}
-      SDXL_NUM_INFERENCE_STEPS: ${SDXL_NUM_INFERENCE_STEPS:-30}
-      SDXL_GUIDANCE_SCALE: ${SDXL_GUIDANCE_SCALE:-7.5}
-      SDXL_NEGATIVE_PROMPT: ${SDXL_NEGATIVE_PROMPT:-}
-      SDXL_ATTENTION_SLICING: ${SDXL_ATTENTION_SLICING:-True}
-      SDXL_VAE_TILING: ${SDXL_VAE_TILING:-False}
-      SDXL_OFFLINE_MODE: ${SDXL_OFFLINE_MODE:-True}
-      SDXL_MODEL_DIR: models/sdxl
-      HF_HOME: /srv/api/models/sdxl
-      TRANSFORMERS_CACHE: /srv/api/models/sdxl
-      NVIDIA_VISIBLE_DEVICES: all
-      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    container_name: decalove-worker-story
+    command:
+      - celery
+      - -A
+      - app.tasks.celery_app.celery_app
+      - worker
+      - --loglevel=info
+      - -Q
+      - story
+      - --concurrency=4
+      - --hostname=story@%h
+    <<: *app-env
     volumes:
       - api_assets:/data/assets
+    depends_on: *infra-ready
+    restart: unless-stopped
+
+  ## Image generation. Nothing a player is reading waits on it: an unfinished asset is
+  ## served as "pending" and the client draws its placeholder (PRD §26).
+  ##
+  ## No GPU by default, so IMAGE_BACKEND=openrouter runs on any host. docker-compose.gpu.yml
+  ## adds the card for IMAGE_BACKEND=sdxl -- see the header for the one-line .env opt-in.
+  ##
+  ## --concurrency=1 is not a throughput mistake. There is one card, diffusion saturates
+  ## it, and a second in-flight pass only competes for the same VRAM.
+  worker-images:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: decalove-api
+    container_name: decalove-worker-images
+    command:
+      - celery
+      - -A
+      - app.tasks.celery_app.celery_app
+      - worker
+      - --loglevel=info
+      - -Q
+      - images
+      - --concurrency=1
+      - --hostname=images@%h
+    <<: *app-env
+    volumes:
+      - api_assets:/data/assets
+      # Persists downloaded SDXL model weights across container rebuilds. Harmless when
+      # IMAGE_BACKEND does not include sdxl -- the directory is simply never read.
       - ./models/sdxl:/srv/api/models/sdxl
-    depends_on:
-      mongodb:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
+    depends_on: *infra-ready
     restart: unless-stopped
 
 volumes:

@@ -1,9 +1,16 @@
 from pathlib import Path
 from typing import List, Literal
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _API_DIR = Path(__file__).resolve().parent.parent
+
+#: Every image backend that can appear in ``IMAGE_BACKEND``.
+#:   openrouter  - the hosted API; needs OPENROUTER_API_KEY
+#:   sdxl        - stabilityai/stable-diffusion-xl-base-1.0, locally on a CUDA GPU
+#:   placeholder - deterministic offline stand-in; always available, never fails
+IMAGE_BACKENDS: tuple[str, ...] = ("openrouter", "sdxl", "placeholder")
 
 
 class Settings(BaseSettings):
@@ -85,19 +92,24 @@ class Settings(BaseSettings):
     # -- Images ----------------------------------------------------------------------
     #: Off by default: image models cost real money per scene.
     IMAGE_GENERATION_ENABLED: bool = False
-    #: "openrouter" uses the cloud API; "sdxl" runs stabilityai/stable-diffusion-xl-base-1.0
-    #: locally on GPU via Hugging Face diffusers + PyTorch.
-    IMAGE_BACKEND: Literal["openrouter", "sdxl"] = "openrouter"
+    #: An ordered preference chain, comma-separated. The first backend that returns an
+    #: image wins, so ``sdxl,openrouter`` renders on the local GPU and falls back to the
+    #: hosted API when there is no GPU or the pipeline fails. A single name is a chain of
+    #: one, which is how this setting behaved before. See IMAGE_BACKENDS for the names.
+    IMAGE_BACKEND: str = "openrouter"
     IMAGE_WIDTH: int = 1024
     IMAGE_HEIGHT: int = 576
     #: Very low generation probability for new unseen images (5%); mostly generates text and reuses existing art.
     IMAGE_GENERATION_PROBABILITY: float = 0.05
 
-    # -- SDXL local GPU settings (only used when IMAGE_BACKEND=sdxl) ----------------
+    # -- SDXL local GPU settings (used when IMAGE_BACKEND includes sdxl) ------------
     SDXL_MODEL_ID: str = "stabilityai/stable-diffusion-xl-base-1.0"
     #: Local directory where the SDXL weights are stored. Relative paths resolve
     #: against the api/ directory (i.e. the repo's api/ folder).
     SDXL_MODEL_DIR: str = "models/sdxl"
+    #: "cuda" is a requirement, not a preference: if CUDA is unavailable the backend
+    #: fails rather than quietly rendering on the CPU, which takes minutes per image and
+    #: is indistinguishable from a hang. Set "cpu" to ask for that deliberately.
     SDXL_DEVICE: str = "cuda"
     SDXL_TORCH_DTYPE: str = "float16"
     SDXL_NUM_INFERENCE_STEPS: int = 30
@@ -135,6 +147,34 @@ class Settings(BaseSettings):
         case_sensitive=True,
         extra="ignore",
     )
+
+    @field_validator("IMAGE_BACKEND")
+    @classmethod
+    def _validate_image_backend(cls, value: str) -> str:
+        """Reject an unknown backend at boot rather than at the first uncached scene.
+
+        A typo used to be silent -- ``IMAGE_BACKEND=sdlx`` matched neither branch, so the
+        deployment simply never produced art, hours later and with nothing in the log
+        pointing at the cause.
+        """
+        names = [name.strip().lower() for name in value.split(",")]
+        names = [name for name in names if name]
+        expected = ", ".join(IMAGE_BACKENDS)
+        if not names:
+            raise ValueError(f"IMAGE_BACKEND is empty; expected one or more of: {expected}")
+        unknown = [name for name in names if name not in IMAGE_BACKENDS]
+        if unknown:
+            raise ValueError(
+                f"unknown image backend(s): {', '.join(unknown)}; expected one or more of: "
+                f"{expected}"
+            )
+        # De-duplicated, first occurrence wins: the chain is a preference order.
+        return ",".join(dict.fromkeys(names))
+
+    @property
+    def image_backends(self) -> tuple[str, ...]:
+        """``IMAGE_BACKEND`` as the ordered chain the runtime should assemble."""
+        return tuple(name for name in self.IMAGE_BACKEND.split(",") if name)
 
     @property
     def has_llm(self) -> bool:

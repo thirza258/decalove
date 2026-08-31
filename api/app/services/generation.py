@@ -1,12 +1,18 @@
 """Background story generation — PRD §12, §14, §25.
 
-Why in-process ``asyncio`` tasks and not Redis + workers (PRD §21): a single-node MVP does
-not need another service, and everything that would make a queue necessary is behind this
-class. ``submit()`` returns immediately; the HTTP handler never waits on a model.
+``submit()`` returns immediately; the HTTP handler never waits on a model. Where the work
+then runs is a deployment choice (``TASK_QUEUE_BACKEND``): in-process ``asyncio`` tasks so
+a single-node MVP needs no second service, or Celery so it can be scaled out. Everything
+that would make a queue necessary is behind this class either way.
+
+Under Celery the two halves of a turn go to *different* queues and different workers.
+Story generation is an API call measured in seconds and images are a GPU pass measured in
+minutes; on one queue the images head-of-line block the prose. See ``tasks/celery_app.py``.
 
 Concurrency: every mutation of a session is serialised by a per-game lock, and the slow
 part (the model call) happens *outside* the lock, so delivering steps to the player is
-never blocked by generating the next batch.
+never blocked by generating the next batch. That lock is process-local, so anything that
+can race a worker against the API -- ``_patch_assets`` -- has to handle losing.
 """
 
 from __future__ import annotations
@@ -24,11 +30,21 @@ from app.domain.direction import DecisionContext, DecisionKind, Directive
 from app.domain.enums import AssetStatus, BatchStatus, StepType
 from app.domain.intent import PlayerIntent
 from app.domain.state import BatchState, GameSession
-from app.domain.story import StoryStep
+from app.domain.story import AssetRef, StoryStep
 from app.repositories.base import GameRepository, StaleSessionError
 from app.services.asset_service import AssetService
 
 log = logging.getLogger(__name__)
+
+#: Tries at writing generated art back into a session before giving up. More than one
+#: because the per-game lock below is process-local: with the API and the Celery workers
+#: in separate processes, nothing serialises this against a concurrent save.
+ASSET_PATCH_ATTEMPTS = 3
+
+#: Ceiling on the worker-side intent refinement. The chat client's own timeout is the full
+#: generation budget, which is far too long to spend on a 400-token parse -- if the model
+#: is that slow, the keyword intent the handler already produced is the better answer.
+INTENT_REFINE_TIMEOUT_S = 20.0
 
 
 class GenerationService:
@@ -116,8 +132,14 @@ class GenerationService:
         *,
         decision: DecisionContext,
         speculative_key: str | None = None,
+        refine_input: str | None = None,
     ) -> BatchState | None:
-        """Queue one generation cycle. Returns the batch, or ``None`` if one is already running."""
+        """Queue one generation cycle. Returns the batch, or ``None`` if one is already running.
+
+        ``refine_input`` is the player's raw text when the caller handed over a keyword
+        intent and wants the model's reading of it. Parsed here rather than in the handler
+        so the 202 goes out without waiting on a model.
+        """
         async with self.lock(game_id):
             session = await self.games.get(game_id)
             if session is None or session.ended:
@@ -145,17 +167,24 @@ class GenerationService:
             try:
                 from app.tasks.generation_tasks import generate_batch_task
                 generate_batch_task.delay(
-                    game_id,
-                    batch.batch_id,
-                    intent.model_dump(),
-                    decision.model_dump(),
-                    speculative_key,
+                    game_id=game_id,
+                    batch_id=batch.batch_id,
+                    intent_dict=intent.model_dump(),
+                    decision_dict=decision.model_dump(),
+                    speculative_key=speculative_key,
+                    refine_input=refine_input,
                 )
             except Exception:
                 log.warning("failed to dispatch batch to Celery, falling back to in-process async", exc_info=True)
-                self._spawn(self._run_batch(game_id, batch, intent, decision, snapshot, prepared))
+                self._spawn(
+                    self._run_batch(
+                        game_id, batch, intent, decision, snapshot, prepared, refine_input
+                    )
+                )
         else:
-            self._spawn(self._run_batch(game_id, batch, intent, decision, snapshot, prepared))
+            self._spawn(
+                self._run_batch(game_id, batch, intent, decision, snapshot, prepared, refine_input)
+            )
         return batch
 
     def _pop_speculation(self, key: str | None) -> tuple[RunResult, Directive] | None:
@@ -182,8 +211,16 @@ class GenerationService:
         decision: DecisionContext,
         snapshot: GameSession,
         prepared: tuple[RunResult, Directive] | None,
+        refine_input: str | None = None,
     ) -> None:
         batch.status = BatchStatus.running
+        record_style: DecisionKind | None = None
+        if refine_input:
+            intent = await self._refine_intent(snapshot, intent, refine_input)
+            # The handler deliberately did not record this turn's style: the keyword intent
+            # it had was a placeholder, and PlayerStyle.targets is what picks the ending
+            # (agents/ending.py). Record it here, from the intent the run is written to.
+            record_style = decision.kind
         directive = self.director.plan(
             snapshot, intent, decision, max_steps=self.narrative.max_steps
         )
@@ -204,7 +241,7 @@ class GenerationService:
             result = self._scripted(snapshot, intent, directive)
 
         try:
-            await self.commit_run(game_id, batch, result, intent, directive)
+            await self.commit_run(game_id, batch, result, intent, directive, record_style=record_style)
         except StaleSessionError as exc:
             log.error("could not commit batch %s for %s: %s", batch.batch_id, game_id, exc)
             await self._mark_failed(game_id, batch, str(exc))
@@ -212,6 +249,29 @@ class GenerationService:
 
         if self.speculative_branches > 0:
             self._spawn(self._speculate(game_id))
+
+    async def _refine_intent(
+        self, snapshot: GameSession, intent: PlayerIntent, raw: str
+    ) -> PlayerIntent:
+        """Ask the model what the player meant, having already answered them.
+
+        The keyword parse in ``GameService.submit_action`` is good enough to commit to;
+        this is the upgrade, and it belongs here because the player is no longer waiting
+        on the request that produced it.
+        """
+        try:
+            return await asyncio.wait_for(
+                self.director.parse(snapshot, raw), timeout=INTENT_REFINE_TIMEOUT_S
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - a worse intent is never worth losing a turn over
+            log.warning(
+                "intent refinement for %s failed; keeping the keyword parse",
+                snapshot.id,
+                exc_info=True,
+            )
+            return intent
 
     async def _generate(
         self,
@@ -264,6 +324,8 @@ class GenerationService:
         result: RunResult,
         intent: PlayerIntent,
         directive: Directive | None = None,
+        *,
+        record_style: DecisionKind | None = None,
     ) -> None:
         """Append a run to the ledger and start generating any art it needs.
 
@@ -271,7 +333,12 @@ class GenerationService:
         not, the opening scene's backgrounds were never requested, so a player who only
         saw the first scene never got any generated art at all.
         """
-        misses = await self._commit(game_id, batch, result, intent, directive)
+        misses = await self._commit(game_id, batch, result, intent, directive, record_style=record_style)
+        # Rolled here, not in the worker. At the default 5% probability, gating downstream
+        # meant nineteen of every twenty image jobs were queued, routed to the GPU worker
+        # and given a whole runtime just to decide to do nothing -- ahead of the ones that
+        # were going to draw something.
+        misses = [spec for spec in misses if self.assets.wants_generation(spec)]
         if misses:
             if self.task_backend == "celery":
                 try:
@@ -299,6 +366,8 @@ class GenerationService:
         result: RunResult,
         intent: PlayerIntent,
         directive: Directive | None = None,
+        *,
+        record_style: DecisionKind | None = None,
     ) -> list[AssetSpec]:
         """Append the run to the ledger under the lock, and report uncached art."""
         misses: list[AssetSpec] = []
@@ -348,6 +417,10 @@ class GenerationService:
             if result.summary:
                 session.history.append(result.summary)
             session.last_intent = intent
+            if record_style is not None:
+                session.style.record(
+                    kind=record_style, risk=intent.risk.value, target=intent.target
+                )
             if directive is not None:
                 # Read back when planning the next run, so pacing has memory.
                 session.last_directive = directive
@@ -386,36 +459,66 @@ class GenerationService:
         """Generate missing art, then patch it into steps the player has not reached yet."""
         session = await self.games.get(game_id)
         world_id = session.world_id if session else ""
-        refs = {}
+        refs: dict[str, AssetRef] = {}
         for spec in specs:
-            ref = await self.assets.ensure(spec, world_id)
+            # gated=False: commit_run already rolled the sampling gate for these specs, and
+            # rolling it again here would square the probability.
+            ref = await self.assets.ensure(spec, world_id, gated=False)
             if ref.status is AssetStatus.ready:
                 refs[spec.cache_key] = ref
         if not refs:
             return
+        await self._patch_assets(game_id, refs)
 
-        async with self.lock(game_id):
-            session = await self.games.get(game_id)
-            if session is None:
-                return
-            patched = 0
-            # Index into session.steps, not session.queued: queued is a fresh slice, so a
-            # replacement written there would be discarded. Steps are frozen, so this is a
-            # copy-and-replace rather than an in-place edit.
-            for position in range(session.cursor + 1, len(session.steps)):
-                step = session.steps[position]
-                updates = {}
-                for attribute in ("background_asset", "character_asset"):
-                    current = getattr(step, attribute)
-                    if current and current.status is not AssetStatus.ready and current.cache_key in refs:
-                        updates[attribute] = refs[current.cache_key]
-                if updates:
-                    session.steps[position] = step.model_copy(update=updates)
-                    patched += len(updates)
-            if patched:
-                with contextlib.suppress(StaleSessionError):
+    async def _patch_assets(self, game_id: str, refs: dict[str, AssetRef]) -> None:
+        """Write ready asset references into steps the player has not reached yet.
+
+        Retried rather than suppressed. The per-game lock is process-local, so once the
+        image worker is a separate process from the API (which is the point of the split)
+        nothing serialises this against a concurrent save -- and dropping the conflict
+        would mean art that was generated, paid for and stored is never shown to anybody.
+        """
+        for attempt in range(1, ASSET_PATCH_ATTEMPTS + 1):
+            async with self.lock(game_id):
+                # Re-read every attempt: the retry has to be applied to whatever the other
+                # writer left behind, not to the stale copy that lost the race.
+                session = await self.games.get(game_id)
+                if session is None:
+                    return
+                patched = 0
+                # Index into session.steps, not session.queued: queued is a fresh slice, so a
+                # replacement written there would be discarded. Steps are frozen, so this is a
+                # copy-and-replace rather than an in-place edit.
+                for position in range(session.cursor + 1, len(session.steps)):
+                    step = session.steps[position]
+                    updates = {}
+                    for attribute in ("background_asset", "character_asset"):
+                        current = getattr(step, attribute)
+                        if current and current.status is not AssetStatus.ready and current.cache_key in refs:
+                            updates[attribute] = refs[current.cache_key]
+                    if updates:
+                        session.steps[position] = step.model_copy(update=updates)
+                        patched += len(updates)
+                if not patched:
+                    # Nothing left to patch: the player has already read past every step
+                    # that wanted this art, or another writer got there first.
+                    return
+                try:
                     await self.games.save(session)
+                except StaleSessionError as exc:
+                    log.info(
+                        "asset patch for %s lost a write race (attempt %d/%d): %s",
+                        game_id, attempt, ASSET_PATCH_ATTEMPTS, exc,
+                    )
+                    continue
                 log.info("patched %d asset reference(s) into undelivered steps of %s", patched, game_id)
+                return
+
+        log.warning(
+            "gave up patching asset references into %s after %d attempts; the art is stored "
+            "and will be picked up by the next batch that references the same cache key",
+            game_id, ASSET_PATCH_ATTEMPTS,
+        )
 
     # -- speculation ---------------------------------------------------------------------
 

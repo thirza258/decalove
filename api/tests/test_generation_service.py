@@ -271,6 +271,156 @@ class TestAssetWriteBack:
         assert first.asset_id == second.asset_id
         assert len(engine.assets_repo._by_id) == 1
 
+    async def test_the_sampling_gate_is_rolled_before_anything_is_queued(self, world, tmp_path):
+        """A skipped image must not cost a queue slot to discover.
+
+        Gating inside the worker meant nineteen of every twenty jobs (the 5% default) were
+        routed to the GPU worker and given a whole runtime purely to decide to do nothing,
+        in front of the ones that were going to draw something.
+        """
+        engine = Engine(world, tmp_path, images=True)
+        engine.assets.generation_probability = 0.0
+
+        # The hand-off both backends share: commit_run either dispatches this to the image
+        # queue or spawns it in-process, and the gate has to be upstream of that choice.
+        handed_off = []
+        original = engine.generation._fill_assets
+
+        async def spy(game_id, specs):
+            handed_off.append(specs)
+            await original(game_id, specs)
+
+        engine.generation._fill_assets = spy
+
+        await engine.start(world)
+        await engine.generation.submit("g1", INTENT, decision=TYPED)
+        await engine.generation.drain()
+
+        assert handed_off == [], "an image the gate was going to skip was still handed to a worker"
+        assert engine.assets_repo._by_id == {}
+        await engine.generation.shutdown()
+
+    async def test_art_that_loses_a_write_race_is_retried_not_dropped(self, world, tmp_path):
+        """The per-game lock is process-local, so once the image worker is its own process
+        nothing serialises this against a concurrent save. Dropping the conflict would mean
+        art that was generated, stored and paid for is never shown to anybody.
+        """
+        from app.domain.story import AssetRef
+        from app.repositories.base import StaleSessionError
+
+        engine = Engine(world, tmp_path, images=True)
+        await engine.start(world)
+        await engine.generation.submit("g1", INTENT, decision=TYPED)
+        await engine.generation.drain()
+
+        session = await engine.games.get("g1")
+        target = next(s for s in session.steps if s.background_asset)
+        cache_key = target.background_asset.cache_key
+        # Undeliver the step and blank its reference, so there is something to patch.
+        session.cursor = -1
+        session.steps[target.index] = target.model_copy(
+            update={"background_asset": AssetRef(cache_key=cache_key, status=AssetStatus.pending)}
+        )
+        await engine.games.save(session)
+
+        original = engine.games.save
+        rejections = 2
+
+        async def reject_then_accept(saved):
+            nonlocal rejections
+            if rejections:
+                rejections -= 1
+                raise StaleSessionError("another writer got there first")
+            await original(saved)
+
+        engine.games.save = reject_then_accept
+        await engine.generation._patch_assets(
+            "g1", {cache_key: AssetRef(cache_key=cache_key, status=AssetStatus.ready, asset_id="a1")}
+        )
+        engine.games.save = original
+
+        assert rejections == 0, "the patch gave up instead of retrying"
+        session = await engine.games.get("g1")
+        patched = session.steps[target.index].background_asset
+        assert patched.status is AssetStatus.ready
+        assert patched.asset_id == "a1"
+        await engine.generation.shutdown()
+
+
+class TestIntentRefinement:
+    """Typed input is keyword-parsed on the request and re-read by the model in the worker.
+
+    The parse used to run inline, holding the player's client on a blocking POST for a
+    model round-trip whose result the Ren'Py client then discards.
+    """
+
+    async def test_the_worker_upgrades_a_keyword_intent(self, world, tmp_path):
+        seen = []
+
+        class RefiningDirector(DirectorAgent):
+            async def parse(self, session, raw):
+                seen.append(raw)
+                return PlayerIntent(action="confess", target="rin", risk="high", raw=raw)
+
+        engine = Engine(world, tmp_path)
+        engine.generation.director = RefiningDirector(world)
+        await engine.start(world)
+
+        await engine.generation.submit(
+            "g1", INTENT, decision=TYPED, refine_input="I tell Rin how I feel"
+        )
+        await engine.generation.drain()
+
+        assert seen == ["I tell Rin how I feel"]
+        session = await engine.games.get("g1")
+        assert session.last_intent.action == "confess"
+        assert session.last_intent.target == "rin"
+        await engine.generation.shutdown()
+
+    async def test_style_is_graded_on_the_refined_intent_not_the_keyword_one(
+        self, world, tmp_path
+    ):
+        """PlayerStyle.targets is what picks the ending (agents/ending.py). Recording the
+        placeholder intent at request time would quietly change who the player ends up with.
+        """
+
+        class RefiningDirector(DirectorAgent):
+            async def parse(self, session, raw):
+                return PlayerIntent(action="confess", target="rin", risk="high", raw=raw)
+
+        engine = Engine(world, tmp_path)
+        engine.generation.director = RefiningDirector(world)
+        await engine.start(world)
+
+        # INTENT is the keyword parse: talk_to / aiko / low risk.
+        await engine.generation.submit("g1", INTENT, decision=TYPED, refine_input="I tell Rin")
+        await engine.generation.drain()
+
+        style = (await engine.games.get("g1")).style
+        assert style.favourite == "rin", f"style followed the keyword parse: {style.targets}"
+        assert style.bold == 1 and style.cautious == 0
+        assert style.typed == 1
+        await engine.generation.shutdown()
+
+    async def test_a_failed_refinement_keeps_the_keyword_intent(self, world, tmp_path):
+        from app.llm.base import LLMError
+
+        class BrokenDirector(DirectorAgent):
+            async def parse(self, session, raw):
+                raise LLMError("upstream is down")
+
+        engine = Engine(world, tmp_path)
+        engine.generation.director = BrokenDirector(world)
+        await engine.start(world)
+
+        await engine.generation.submit("g1", INTENT, decision=TYPED, refine_input="hi")
+        await engine.generation.drain()
+
+        session = await engine.games.get("g1")
+        assert session.last_intent.action == INTENT.action
+        assert session.pending.status is BatchStatus.ready, "a bad parse cost the player a turn"
+        await engine.generation.shutdown()
+
 
 class TestSpeculation:
     async def test_a_prefetched_branch_is_used_instead_of_regenerating(self, world, tmp_path):
@@ -367,8 +517,33 @@ class TestSpeculationIsolation:
         engine.generation.task_backend = "celery"
         session = await engine.start(world)
 
-        batch = await engine.generation.submit(session.id, INTENT, decision=TYPED)
+        batch = await engine.generation.submit(
+            session.id, INTENT, decision=TYPED, refine_input="I say hello"
+        )
         assert batch is not None
         assert len(calls) == 1
-        assert calls[0][0][0] == session.id
+        # Dispatched by keyword: the task signature has grown twice now, and a positional
+        # payload silently shifts every argument when it grows again.
+        payload = calls[0][1]
+        assert payload["game_id"] == session.id
+        assert payload["batch_id"] == batch.batch_id
+        assert payload["refine_input"] == "I say hello"
         await engine.generation.shutdown()
+
+    async def test_story_and_images_are_dispatched_to_separate_queues(self):
+        """The whole point of the split: a GPU pass must never be in front of a player's
+        next line. One shared queue plus worker_prefetch_multiplier=1 means exactly that.
+        """
+        celery = pytest.importorskip("app.tasks.celery_app")
+        if celery.celery_app is None:
+            pytest.skip("celery is not installed")
+
+        routes = celery.celery_app.conf.task_routes
+        story = routes["app.tasks.generation_tasks.generate_batch_task"]["queue"]
+        images = routes["app.tasks.generation_tasks.generate_assets_task"]["queue"]
+
+        assert story == celery.STORY_QUEUE
+        assert images == celery.IMAGE_QUEUE
+        assert story != images
+        # Unrouted work is story work, never the queue with the GPU behind it.
+        assert celery.celery_app.conf.task_default_queue == celery.STORY_QUEUE
