@@ -55,3 +55,9 @@ Thumbs.db
 desktop.ini
 
 images/
+# --- Frontend (self-hosted web client) ---
+# Generated art under frontend/public/images/ is already covered by the `images/`
+# rule above, exactly as game/images/ is for the Ren'Py build.
+frontend/node_modules/
+frontend/dist/
+frontend/.env

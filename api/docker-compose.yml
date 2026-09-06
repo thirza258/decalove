@@ -1,7 +1,8 @@
-## Decalove backend stack.
+## Decalove stack: the story engine, its workers, and the self-hosted web client.
 ##
-##   docker compose up -d                   full stack, API on :8000
+##   docker compose up -d                   everything; game on :3000, API on :8000
 ##   docker compose up -d mongodb minio     just the infrastructure, run the API locally
+##   docker compose up -d --scale web=0     no web client (shipping the Ren'Py build instead)
 ##
 ## Story and image generation run on separate queues and separate workers. Prose is an
 ## API call and pictures are a GPU pass, and on one queue the pictures head-of-line block
@@ -10,9 +11,12 @@
 ##   docker compose logs -f worker-story
 ##   docker compose logs -f worker-images
 ##
-## Settings come from .env, which app/config.py already treats as the source of truth.
-## This file sets only what .env cannot know: the addresses of the services below. Adding
-## a tunable here would silently shadow .env for anyone running in Docker.
+## API settings come from .env, which app/config.py already treats as the source of
+## truth. This file sets only what .env cannot know: the addresses of the services below.
+## Adding a tunable here would silently shadow .env for anyone running in Docker.
+##
+## The web client is configured the same way and from the same .env -- see the `web`
+## service. DECALOVE_WEB_PORT chooses the port the game is served on (default 3000).
 ##
 ## No GPU is reserved by default, so the stack comes up on any host. For local SDXL put
 ## this in .env alongside IMAGE_BACKEND=sdxl,... and `docker compose up -d` picks it up:
@@ -184,6 +188,32 @@ services:
       # IMAGE_BACKEND does not include sdxl -- the directory is simply never read.
       - ./models/sdxl:/srv/api/models/sdxl
     depends_on: *infra-ready
+    restart: unless-stopped
+
+  ## The self-hosted web client — the browser build of the same game as game/ (Ren'Py).
+  ##
+  ## It serves the static bundle and proxies /api/ to the API above, so the browser sees
+  ## one origin: no CORS to satisfy, and no way to end up with an https page calling an
+  ## http API. That is why DECALOVE_API_BASE is empty rather than a URL.
+  ##
+  ## The bundle is built once and configured here, not at build time: the entrypoint
+  ## writes /config.js from these variables on every start, so the same image runs in
+  ## every environment.
+  web:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    image: decalove-web
+    container_name: decalove-web
+    ports:
+      - "${DECALOVE_WEB_PORT:-3000}:80"
+    environment:
+      DECALOVE_API_BASE: ""
+      DECALOVE_API_PREFIX: /api/v1
+      DECALOVE_API_UPSTREAM: http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:

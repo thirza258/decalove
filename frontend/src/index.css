@@ -1,0 +1,81 @@
+@import "tailwindcss";
+
+/**
+ * The Ren'Py build's visual identity, carried over from `game/gui.rpy`.
+ *
+ * The 80 files under `game/gui/` are not ported: they are skinning for a widget
+ * toolkit this client does not use. What matters is the identity those files dress —
+ * the palette, the type scale, and the geometry of the text box — and that is all
+ * expressed here in the same numbers.
+ */
+@theme {
+  /* gui.accent_color, idle, hover, selected, insensitive, muted, hover_muted */
+  --color-vn-accent: #0099cc;
+  --color-vn-idle: #888888;
+  --color-vn-hover: #66c1e0;
+  --color-vn-selected: #ffffff;
+  --color-vn-insensitive: #8888887f;
+  --color-vn-muted: #003d51;
+  --color-vn-hover-muted: #005b7a;
+
+  /* `image decalove_void = Solid("#0b0d14")` — the letterbox and the cold-boot screen. */
+  --color-vn-void: #0b0d14;
+
+  /* gui.text_size / name_text_size / interface / label / title */
+  --text-vn-body: 22px;
+  --text-vn-name: 30px;
+  --text-vn-interface: 22px;
+  --text-vn-label: 24px;
+  --text-vn-title: 50px;
+}
+
+/**
+ * The design canvas is 1280x720, from `gui.init(1280, 720)`. Rather than reinventing
+ * the layout in relative units, the stage is that exact size and is scaled to fit the
+ * window — which is what Ren'Py itself does, and it means every measurement below is
+ * the number in gui.rpy with no arithmetic in between.
+ */
+:root {
+  --stage-w: 1280px;
+  --stage-h: 720px;
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: var(--color-vn-void);
+  color: var(--color-vn-selected);
+  font-family: "DejaVu Sans", ui-sans-serif, system-ui, sans-serif;
+  overflow: hidden;
+}
+
+/* A dialogue box that reveals its text, and a click that completes the line. */
+@keyframes vn-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.vn-fade {
+  animation: vn-fade-in 260ms ease-out;
+}
+
+/* `renpy.with_statement(dissolve)` on every scene change. */
+@keyframes vn-dissolve {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.vn-dissolve {
+  animation: vn-dissolve 400ms ease-out;
+}

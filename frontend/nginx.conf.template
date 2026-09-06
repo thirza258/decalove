@@ -1,0 +1,73 @@
+# Rendered by nginx:alpine's own envsubst step at start-up. Only ${DECALOVE_*} are
+# substituted -- nginx's own $uri, $host and friends are not environment variables, so
+# they survive untouched.
+
+server {
+    listen ${DECALOVE_PORT};
+    server_name _;
+    root /usr/share/nginx/html;
+
+    # The API, same-origin. This is what makes DECALOVE_API_BASE="" work, and with it
+    # there is no CORS to satisfy and no mixed-scheme pair for the browser to reject.
+    #
+    # The upstream goes through a variable on purpose. Written literally, nginx resolves
+    # the hostname once at start-up and *refuses to boot* if it cannot -- so running this
+    # image standalone, with the browser pointed straight at an API elsewhere and this
+    # proxy unused, would fail on a DNS name it never needed. A variable defers the
+    # lookup to the request, which is also what lets the API restart under it.
+    #
+    # $request_uri, not the location prefix: with a variable nginx does not append the
+    # matched path itself, and $request_uri is the full original path *and* query string
+    # -- which is what carries ?wait_ms= through to the long poll.
+    location /api/ {
+        set $decalove_upstream "${DECALOVE_API_UPSTREAM}";
+        proxy_pass $decalove_upstream$request_uri;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # GET /steps/batch holds the connection for wait_ms so the next beat arrives
+        # the instant it exists (PRD §11). Buffering would hold the reply back until
+        # nginx felt like flushing it, and the client aborts at wait_ms + 5s -- a long
+        # poll that works locally and times out only behind the proxy.
+        proxy_buffering off;
+        proxy_request_buffering off;
+        # Comfortably above any client budget, so nginx is never the thing that gives up
+        # first. The client's own timeout stays the one that decides.
+        proxy_read_timeout 120s;
+        proxy_send_timeout 120s;
+    }
+
+    # Regenerated from the environment on every start, so it must never be held by a
+    # browser across a redeploy.
+    location = /config.js {
+        add_header Cache-Control "no-store" always;
+    }
+
+    location = /index.html {
+        add_header Cache-Control "no-store" always;
+    }
+
+    # Content-hashed by Vite, so the name changes whenever the bytes do.
+    location /assets/ {
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+    }
+
+    # Generated art, if any has been baked in or mounted. A miss is ordinary: the client
+    # falls back to the palette gradient (PRD §26), so this must not reach the SPA
+    # fallback and answer a missing PNG with index.html.
+    location /images/ {
+        try_files $uri =404;
+    }
+
+    # Single page app: every other path is the client's to route.
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    gzip on;
+    gzip_types text/css application/javascript application/json image/svg+xml;
+    gzip_min_length 1024;
+}
