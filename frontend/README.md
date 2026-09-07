@@ -35,10 +35,12 @@ browser blocks an https page calling an http API whatever CORS says.
 ## Self-hosting
 
 ```bash
-cd api && docker compose up -d      # game on :3000, API on :8000
+./deploy.sh                         # from the repo root; game on :3000, API on :8000
 ```
 
-That brings up MongoDB, MinIO, Redis, the API, both workers, and this client. The web
+That brings up MongoDB, MinIO, Redis, the API, both workers, and this client, waits for
+them to report healthy, and prints the URLs. `./deploy.sh --help` lists the rest;
+`cd api && docker compose up -d` is the same thing without the conveniences. The web
 container serves the static bundle and proxies `/api/` to the API, so the browser sees
 one origin — no CORS to satisfy, and no way to end up with an https page calling an http
 API. `DECALOVE_WEB_PORT` in `api/.env` changes the published port.

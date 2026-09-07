@@ -47,11 +47,38 @@ cp api/.env.example api/.env
 ### Or run the whole thing in Docker
 
 ```bash
-cd api && docker compose up -d      # MongoDB + MinIO + the API on :8000
+./deploy.sh
 ```
 
-Locally, MongoDB and MinIO are detected automatically — without them, saves live in
-memory and generated art lands in `api/var/assets/`.
+Builds and starts everything — MongoDB, MinIO, Redis, the API, both Celery workers, and
+the web client — then waits for them to report healthy and prints the URLs. The game
+lands on <http://localhost:3000> and the API on <http://localhost:8000>.
+
+| | |
+|---|---|
+| `./deploy.sh` | build and start everything |
+| `./deploy.sh --gpu` | ...with local SDXL image generation on the GPU |
+| `./deploy.sh --no-web` | API and workers only, for shipping the Ren'Py build instead |
+| `./deploy.sh --no-build` | restart without rebuilding images |
+| `./deploy.sh down` | stop everything, keeping saves and art |
+| `./deploy.sh logs [service]` | follow logs |
+| `./deploy.sh ps` | what is running |
+
+The first build pulls a CUDA base image and installs Node and Python dependencies, so
+give it a few minutes; `DECALOVE_WAIT_TIMEOUT=600 ./deploy.sh` raises the 300-second
+health wait on a slow disk. Only the databases report health, so `./deploy.sh ps` is what
+confirms the API and both workers actually stayed up.
+
+It creates `api/.env` from `api/.env.example` on first run, which is where all
+configuration lives — the script itself only starts things. `docker compose` directly
+still works if you prefer; the script is that invocation with the flags remembered:
+
+```bash
+cd api && docker compose up -d
+```
+
+Locally, without Docker, MongoDB and MinIO are detected automatically — without them,
+saves live in memory and generated art lands in `api/var/assets/`.
 
 ### Tests
 
@@ -59,7 +86,7 @@ memory and generated art lands in `api/var/assets/`.
 cd api && .venv/bin/python -m pytest -q
 ```
 
-425 tests. None of them need an API key or the Ren'Py SDK; the integration suites need
+465 tests. None of them need an API key or the Ren'Py SDK; the integration suites need
 MongoDB and MinIO and skip themselves cleanly when those are not running.
 
 ## How it works
