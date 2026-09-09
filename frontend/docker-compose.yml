@@ -1,0 +1,47 @@
+## Decalove web client — standalone docker compose stack.
+##
+## Brings up the self-hosted browser build of Decalove without needing the full
+## multi-service backend stack:
+##
+##   docker compose up -d             game on http://localhost:3000
+##   docker compose logs -f web       follow web & nginx proxy logs
+##   docker compose down              stop the client container
+##
+## Configuration:
+##   - DECALOVE_WEB_PORT: Published port on the host (default: 3000).
+##   - DECALOVE_API_BASE: Where the browser sends API calls. Empty (default) means
+##     same-origin: requests go to /api/ on this server and nginx proxies them to
+##     DECALOVE_API_UPSTREAM. Set an absolute URL (e.g. https://api.example.com) to
+##     have the browser call the API directly and bypass the nginx proxy.
+##   - DECALOVE_API_UPSTREAM: Where nginx forwards /api/ requests. Defaults to
+##     http://host.docker.internal:8000 to reach an API running on the host (or
+##     published on host port 8000 by api/docker-compose.yml).
+##   - DECALOVE_API_PREFIX: API route prefix (default: /api/v1).
+##   - DECALOVE_PORT: Internal port nginx listens on (default: 80).
+##
+## Values can be set in frontend/.env or as environment variables.
+## For the full stack (MongoDB, MinIO, Redis, API, and workers), run ./deploy.sh
+## from the repository root or use api/docker-compose.yml.
+
+name: decalove-frontend
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: decalove-web
+    container_name: decalove-web
+    ports:
+      - "${DECALOVE_WEB_PORT:-3000}:${DECALOVE_PORT:-80}"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DECALOVE_API_BASE: "${DECALOVE_API_BASE:-}"
+      DECALOVE_API_PREFIX: "${DECALOVE_API_PREFIX:-/api/v1}"
+      DECALOVE_API_UPSTREAM: "${DECALOVE_API_UPSTREAM:-http://host.docker.internal:8000}"
+      DECALOVE_PORT: "${DECALOVE_PORT:-80}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped

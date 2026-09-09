@@ -48,6 +48,9 @@ API. `DECALOVE_WEB_PORT` in `api/.env` changes the published port.
 Standalone, without the rest of the stack:
 
 ```bash
+docker compose up -d
+
+# Or with docker directly:
 docker build -t decalove-web frontend/
 docker run -p 3000:80 -e DECALOVE_API_BASE=https://api.example.com decalove-web
 ```
