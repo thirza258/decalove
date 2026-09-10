@@ -28,7 +28,8 @@ FROM nginx:1.29-alpine AS runtime
 COPY --from=build /build/dist /usr/share/nginx/html
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY docker-entrypoint.d/ /docker-entrypoint.d/
-RUN chmod +x /docker-entrypoint.d/*.sh
+RUN sed -i 's/\r$//' /etc/nginx/templates/default.conf.template /docker-entrypoint.d/*.sh \
+    && chmod +x /docker-entrypoint.d/*.sh
 
 # DECALOVE_API_BASE — where the *browser* sends API calls.
 #   Empty (the default) means same-origin: calls go to /api/ on this server and nginx

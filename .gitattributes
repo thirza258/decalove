@@ -1,0 +1,7 @@
+# Enforce LF for shell scripts and docker configuration files across platforms
+* text=auto
+
+*.sh text eol=lf
+*.bash text eol=lf
+Dockerfile text eol=lf
+*.template text eol=lf

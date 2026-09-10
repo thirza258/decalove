@@ -12,7 +12,7 @@ from app.config import settings
 from app.database import is_available as mongo_available
 from app.dependencies import RuntimeDep, require_mongo
 from app.models.scene import SceneCreate, SceneOut
-from app.routes import assets, games, images, scenes
+from app.routes import assets, games, images, scenes, static_assets
 from app.runtime import Runtime, build_runtime
 from app.services.scene_service import create_scene
 
@@ -60,6 +60,7 @@ app.include_router(assets.router, prefix=settings.API_PREFIX)
 # Legacy authored-scene CRUD: predates the story engine, still MongoDB-only.
 app.include_router(scenes.router, prefix=settings.API_PREFIX, dependencies=[Depends(require_mongo)])
 app.include_router(images.router, prefix=settings.API_PREFIX, dependencies=[Depends(require_mongo)])
+app.include_router(static_assets.router, prefix=settings.API_PREFIX)
 
 
 @app.get("/health", tags=["ops"])

@@ -13,6 +13,7 @@
  */
 
 import type { WorldCharacter, WorldLocation } from "../api/types";
+import { API_BASE, API_PREFIX } from "../config";
 
 export const FALLBACK_PALETTE: [string, string] = ["#3a4a6b", "#131a2b"];
 
@@ -86,9 +87,13 @@ export function staticBackground(
 ): string | null {
   return probe(
     [
+      `${API_BASE}${API_PREFIX}/static/images/bg/${locationId}.png`,
       `/images/bg/${locationId}.png`,
+      `${API_BASE}${API_PREFIX}/static/images/bg/${locationId}_morning.png`,
       `/images/bg/${locationId}_morning.png`,
+      `${API_BASE}${API_PREFIX}/static/images/bg/${locationId}_noon.png`,
       `/images/bg/${locationId}_noon.png`,
+      `${API_BASE}${API_PREFIX}/static/images/bg/${locationId}_sunset.png`,
       `/images/bg/${locationId}_sunset.png`,
     ],
     onSettled,
@@ -103,9 +108,14 @@ export function staticSprite(
 ): string | null {
   const candidates = expression
     ? [
+        `${API_BASE}${API_PREFIX}/static/images/characters/${characterId}/${expression}.png`,
         `/images/characters/${characterId}/${expression}.png`,
+        `${API_BASE}${API_PREFIX}/static/images/characters/${characterId}.png`,
         `/images/characters/${characterId}.png`,
       ]
-    : [`/images/characters/${characterId}.png`];
+    : [
+        `${API_BASE}${API_PREFIX}/static/images/characters/${characterId}.png`,
+        `/images/characters/${characterId}.png`,
+      ];
   return probe(candidates, onSettled);
 }
