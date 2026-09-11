@@ -73,6 +73,64 @@ describe("delivery", () => {
   });
 });
 
+describe("decisions and pipelined continuation", () => {
+  it("immediately advances to continuation steps when buffer is non-empty upon decision submission", () => {
+    const decision = step({ step_id: "s14", type: "choice", next_choices: [{ id: "c1", text: "Go" }] });
+    const continuation1 = step({ step_id: "s15", narration: "You move forward." });
+    const continuation2 = step({ step_id: "s16", narration: "The hall is quiet." });
+
+    // Player reached decision step s14, with s15 and s16 buffered
+    const state = reduce(playing, {
+      type: "batch/received",
+      body: batch({ steps: [decision, continuation1, continuation2] }),
+    });
+
+    expect(state.deciding).toBe(true);
+    expect(state.current?.step_id).toBe("s14");
+    expect(state.buffer.map((s) => s.step_id)).toEqual(["s15", "s16"]);
+
+    // Player submits decision
+    const submittedState = reduce(state, { type: "decision/submitted" });
+
+    // Next step (s15) should immediately become current and deciding becomes false
+    expect(submittedState.deciding).toBe(false);
+    expect(submittedState.current?.step_id).toBe("s15");
+    expect(submittedState.buffer.map((s) => s.step_id)).toEqual(["s16"]);
+  });
+
+  it("leaves current unchanged and marks deciding false when buffer is empty on submission", () => {
+    const decision = step({ step_id: "s14", type: "choice", next_choices: [{ id: "c1", text: "Go" }] });
+    const state = reduce(playing, {
+      type: "batch/received",
+      body: batch({ steps: [decision] }),
+    });
+
+    expect(state.deciding).toBe(true);
+    expect(state.buffer).toHaveLength(0);
+
+    const submittedState = reduce(state, { type: "decision/submitted" });
+    expect(submittedState.deciding).toBe(false);
+    expect(submittedState.current?.step_id).toBe("s14");
+    expect(submittedState.buffer).toHaveLength(0);
+  });
+
+  it("appends prefetched batch into buffer and deduplicates", () => {
+    const cur = step({ step_id: "s1" });
+    const buf = step({ step_id: "s2" });
+    const fresh1 = step({ step_id: "s2" }); // duplicate
+    const fresh2 = step({ step_id: "s3" }); // new
+
+    const state: State = { ...playing, current: cur, buffer: [buf] };
+    const nextState = reduce(state, {
+      type: "batch/append",
+      body: batch({ steps: [fresh1, fresh2] }),
+    });
+
+    expect(nextState.current?.step_id).toBe("s1");
+    expect(nextState.buffer.map((s) => s.step_id)).toEqual(["s2", "s3"]);
+  });
+});
+
 describe("pending is never a spinner", () => {
   it("cycles the location's ambient lines without repeating", () => {
     const ambience = ["Wind on the fence.", "A door, somewhere below."];

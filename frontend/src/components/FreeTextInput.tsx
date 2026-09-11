@@ -32,9 +32,12 @@ export function FreeTextInput({ onSubmit, onCancel }: Props) {
         }}
         className="w-[790px] rounded-sm border border-vn-muted bg-vn-void/95 px-10 py-8"
       >
-        <label htmlFor="vn-freetext" className="mb-4 block text-[24px] text-white">
+        <label htmlFor="vn-freetext" className="block text-[24px] text-white">
           What do you do?
         </label>
+        <p className="mt-1 mb-4 text-[14px] text-white/50">
+          Write any dialogue or action — the AI narrator will adapt the story and character reactions to your input.
+        </p>
         <input
           id="vn-freetext"
           ref={input}

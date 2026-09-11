@@ -115,6 +115,8 @@ export interface WorldOut {
   opening_location: string;
   characters: WorldCharacter[];
   locations: WorldLocation[];
+  /** When true, the API only serves pre-existing images from storage; no runtime generation. */
+  web_mode?: boolean;
 }
 
 export interface GameStateOut {
@@ -138,3 +140,9 @@ export interface NewGameRequest {
   tone: string;
   romance_focus?: string | null;
 }
+
+export interface ActionRequest {
+  input: string;
+  step_id?: string | null;
+}
+

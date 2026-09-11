@@ -10,6 +10,7 @@ import { useMemo, useState } from "react";
 import { ChoiceMenu } from "./components/ChoiceMenu";
 import { DialogueBox } from "./components/DialogueBox";
 import { FreeTextInput } from "./components/FreeTextInput";
+import { LandingPage } from "./components/LandingPage";
 import {
   EndingOverlay,
   ExpiredScreen,
@@ -31,6 +32,7 @@ const INTRO = [
 ];
 
 export default function App() {
+  const [playing, setPlaying] = useState(false);
   const game = useDecalove();
   const { state } = game;
 
@@ -68,6 +70,11 @@ export default function App() {
     game.advance();
   };
 
+  // Show the landing page until the player clicks "Play Now".
+  if (!playing) {
+    return <LandingPage onPlay={() => setPlaying(true)} />;
+  }
+
   if (state.phase === "boot") {
     return <StageFrame><Booting /></StageFrame>;
   }
@@ -91,7 +98,11 @@ export default function App() {
   if (state.phase === "menu") {
     return (
       <StageFrame>
-        <TitleScreen title={state.world?.title ?? "Decalove"} onStart={game.startNewGame} />
+        <TitleScreen
+          title={state.world?.title ?? "Decalove"}
+          onStart={game.startNewGame}
+          onHome={() => setPlaying(false)}
+        />
       </StageFrame>
     );
   }
@@ -130,6 +141,7 @@ export default function App() {
         <ChoiceMenu
           choices={state.current.next_choices}
           onPick={game.chooseOption}
+          onSubmitCustom={game.submitFreeText}
           onFreeText={() => game.openFreeText(true)}
         />
       )}

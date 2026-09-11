@@ -77,6 +77,13 @@ export const MAX_OFFLINE_STREAK = 3;
 export const BATCH_LIMIT = 20;
 
 /**
+ * When the buffer drops to this many steps, a background fetch fires to load the next
+ * batch before the player exhausts the current one. This eliminates the 4-second
+ * long-poll gap that would otherwise appear between batches.
+ */
+export const PREFETCH_THRESHOLD = 5;
+
+/**
  * The design canvas, from `gui.init(1280, 720)`. The stage is letterboxed to this
  * ratio and every position below is expressed as a fraction of it, so the layout is
  * the Ren'Py one at any window size.

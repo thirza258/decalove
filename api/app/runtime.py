@@ -73,6 +73,7 @@ class Runtime:
     def describe(self) -> dict[str, Any]:
         return {
             "world": self.world.id,
+            "web_mode": self.settings.WEB_MODE,
             "storage": self.storage_backend,
             "assets": self.asset_backend,
             "narrative": self.chat.name if self.chat else "scripted (no OPENROUTER_API_KEY)",
@@ -287,12 +288,18 @@ async def build_runtime(settings: Settings) -> Runtime:
         character_pose_variants=settings.IMAGE_CHARACTER_POSE_VARIANTS,
     )
     memory_agent = MemoryAgent(embedder, memories, top_k=settings.MEMORY_TOP_K)
+    image_generation_enabled = settings.IMAGE_GENERATION_ENABLED and not settings.WEB_MODE
+    if settings.WEB_MODE and settings.IMAGE_GENERATION_ENABLED:
+        log.info(
+            "WEB_MODE is on — image generation disabled. "
+            "Only pre-existing images in the asset store will be served."
+        )
     asset_service = AssetService(
         assets_repo,
         store,
         image,
         api_prefix=settings.API_PREFIX,
-        enabled=settings.IMAGE_GENERATION_ENABLED,
+        enabled=image_generation_enabled,
         generation_probability=settings.IMAGE_GENERATION_PROBABILITY,
         width=settings.IMAGE_WIDTH,
         height=settings.IMAGE_HEIGHT,

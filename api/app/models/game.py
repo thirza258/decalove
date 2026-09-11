@@ -25,6 +25,7 @@ class ActionRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     input: str = Field(min_length=1, max_length=600)
+    step_id: str | None = None
 
 
 class SkipRequest(BaseModel):
@@ -125,3 +126,4 @@ class WorldOut(BaseModel):
     opening_location: str
     characters: list[CharacterOut]
     locations: list[LocationOut]
+    web_mode: bool = False

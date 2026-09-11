@@ -89,6 +89,7 @@ export type Action =
   | { type: "busy"; busy: boolean }
   | { type: "advance" }
   | { type: "batch/received"; body: StepsBatchOut }
+  | { type: "batch/append"; body: StepsBatchOut }
   | { type: "batch/failed"; message: string }
   | { type: "decision/typing"; open: boolean }
   | { type: "decision/submitted" }
@@ -217,6 +218,27 @@ export function reduce(state: State, action: Action): State {
       return { ...settled, phase: "ended", seenEnding: true, deciding: false };
     }
 
+    // Prefetched batch: merge into the existing buffer without interrupting playback.
+    // If the buffer was already empty and no current step is shown, present immediately.
+    case "batch/append": {
+      const body = action.body;
+      if (body.status !== "ready" || body.steps.length === 0) return state;
+
+      // De-duplicate: skip steps already in the buffer (by step_id).
+      const seen = new Set(state.buffer.map((s) => s.step_id));
+      if (state.current) seen.add(state.current.step_id);
+      const fresh = body.steps.filter((s) => !seen.has(s.step_id));
+      if (fresh.length === 0) return state;
+
+      // If the player is waiting on an empty buffer, present the first fresh step.
+      if (!state.current && state.buffer.length === 0 && !state.deciding) {
+        const [first, ...rest] = fresh;
+        return present(state, first, rest);
+      }
+
+      return { ...state, buffer: [...state.buffer, ...fresh] };
+    }
+
     case "batch/failed": {
       const streak = state.offlineStreak + 1;
       if (streak >= MAX_OFFLINE_STREAK) {
@@ -228,10 +250,17 @@ export function reduce(state: State, action: Action): State {
     case "decision/typing":
       return { ...state, typing: action.open };
 
-    // The player answered. Control passes back to playback; the next advance pulls
-    // whatever the engine wrote in response.
-    case "decision/submitted":
-      return { ...state, deciding: false, typing: false, pendingStreak: 0 };
+    // The player answered. If steps remain in the buffer (e.g. continuation beats
+    // in a 20-step batch), immediately present the next step so the story continues
+    // seamlessly while Celery / background worker generates the next batch.
+    case "decision/submitted": {
+      const base = { ...state, deciding: false, typing: false, pendingStreak: 0 };
+      if (base.buffer.length > 0) {
+        const [next, ...rest] = base.buffer;
+        return present(base, next, rest);
+      }
+      return base;
+    }
 
     case "offline":
       return { ...state, busy: false, phase: "offline", message: action.message };

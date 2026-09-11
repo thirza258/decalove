@@ -453,7 +453,9 @@ class GameService:
 
     # -- player input --------------------------------------------------------------------
 
-    async def submit_action(self, game_id: str, text: str) -> tuple[BatchState | None, PlayerIntent]:
+    async def submit_action(
+        self, game_id: str, text: str, step_id: str | None = None
+    ) -> tuple[BatchState | None, PlayerIntent]:
         session = await self.get(game_id)
         if session.ended:
             raise InvalidAction("this game has ended")
@@ -474,7 +476,35 @@ class GameService:
         # for the story at all -- latency the queue split cannot remove because it is not
         # on a queue.
         intent, refinable = self.director.parse_fast(session, text)
-        head = session.current_step
+
+        step = session.step_by_id(step_id) if step_id else None
+        if step is not None:
+            if not step.is_blocking:
+                raise InvalidAction(f"step {step_id} is not a decision point")
+            if step.index > session.cursor:
+                raise InvalidAction("that decision point has not been reached yet")
+            latest_delivered = next(
+                (s for s in reversed(session.steps[: session.cursor + 1]) if s.is_blocking),
+                None,
+            )
+            latest_all = next(
+                (s for s in reversed(session.steps) if s.is_blocking),
+                None,
+            )
+            if (
+                latest_delivered is None
+                or step.step_id != latest_delivered.step_id
+                or (latest_all is not None and latest_all.index > step.index)
+            ):
+                raise InvalidAction("that decision point is no longer the current one")
+            head = step
+        else:
+            latest_delivered = next(
+                (s for s in reversed(session.steps[: session.cursor + 1]) if s.is_blocking),
+                None,
+            )
+            head = latest_delivered or session.current_step
+
         decision = DecisionContext(
             kind=DecisionKind.free_text,
             step_id=head.step_id if head else None,
@@ -492,18 +522,22 @@ class GameService:
                 # would tell the player their line was accepted, and the next poll would
                 # 404 anyway.
                 raise GameNotFound(game_id)
-            current.history.append(f'{current.player.name} typed: "{text.strip()[:160]}"')
-            current.played()
-            if not refinable:
-                # With no model to refine it, the keyword intent is the final one. When
-                # there is one, the worker records the style instead, from the refined
-                # intent -- PlayerStyle.targets is what picks the ending (agents/ending.py),
-                # so grading typed input on the keyword parse would quietly change who the
-                # player ends up with.
-                current.style.record(
-                    kind=decision.kind, risk=intent.risk.value, target=intent.target
-                )
-            await self.games.save(current)
+            if not (
+                current.pending
+                and current.pending.status in (BatchStatus.queued, BatchStatus.running)
+            ):
+                current.history.append(f'{current.player.name} typed: "{text.strip()[:160]}"')
+                current.played()
+                if not refinable:
+                    # With no model to refine it, the keyword intent is the final one. When
+                    # there is one, the worker records the style instead, from the refined
+                    # intent -- PlayerStyle.targets is what picks the ending (agents/ending.py),
+                    # so grading typed input on the keyword parse would quietly change who the
+                    # player ends up with.
+                    current.style.record(
+                        kind=decision.kind, risk=intent.risk.value, target=intent.target
+                    )
+                await self.games.save(current)
 
         batch = await self.generation.submit(
             game_id, intent, decision=decision, refine_input=text if refinable else None
@@ -522,7 +556,25 @@ class GameService:
             raise InvalidAction(f"unknown step {step_id}")
         if not step.is_blocking:
             raise InvalidAction(f"step {step_id} is not a decision point")
-        if step.index != session.cursor:
+        if step.index > session.cursor:
+            raise InvalidAction("that decision point has not been reached yet")
+
+        # In a 20-step pipelined batch, the decision point is placed at step 10-15 while the
+        # cursor advances to the end of the batch. Check that this step is the latest decision
+        # point among delivered steps, and that no subsequent batch has already been committed.
+        latest_delivered = next(
+            (s for s in reversed(session.steps[: session.cursor + 1]) if s.is_blocking),
+            None,
+        )
+        latest_all = next(
+            (s for s in reversed(session.steps) if s.is_blocking),
+            None,
+        )
+        if (
+            latest_delivered is None
+            or step.step_id != latest_delivered.step_id
+            or (latest_all is not None and latest_all.index > step.index)
+        ):
             raise InvalidAction("that decision point is no longer the current one")
 
         choice = next((c for c in step.next_choices if c.id == choice_id), None)
@@ -542,10 +594,14 @@ class GameService:
             current = await self.games.get(game_id)
             if current is None:
                 raise GameNotFound(game_id)
-            current.history.append(f'{current.player.name} chose: "{choice.text}"')
-            current.played()
-            current.style.record(kind=decision.kind, risk=intent.risk.value, target=intent.target)
-            await self.games.save(current)
+            if not (
+                current.pending
+                and current.pending.status in (BatchStatus.queued, BatchStatus.running)
+            ):
+                current.history.append(f'{current.player.name} chose: "{choice.text}"')
+                current.played()
+                current.style.record(kind=decision.kind, risk=intent.risk.value, target=intent.target)
+                await self.games.save(current)
 
         batch = await self.generation.submit(
             game_id,

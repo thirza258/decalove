@@ -1000,7 +1000,7 @@ class ScriptedNarrator:
                 post_steps.append(
                     self._narration(
                         location.id,
-                        fill("You step back, letting the moment pass."),
+                        fill("A quiet breath settles, letting the moment pass."),
                         visual_character=target.id if target else None,
                         expression=emotion,
                         present=present,
@@ -1018,7 +1018,7 @@ class ScriptedNarrator:
                 post_steps.append(
                     self._narration(
                         location.id,
-                        fill("You take a moment to regroup and look around."),
+                        fill("The moment clears, leaving room to look around."),
                         visual_character=target.id if target else None,
                         expression=emotion,
                         present=present,
@@ -1034,7 +1034,18 @@ class ScriptedNarrator:
                     )
                 )
 
-            needed_post = max_steps - len(pre_steps) - 1
+            needed_post = max(0, max_steps - len(pre_steps) - 1)
+            while len(post_steps) < needed_post:
+                idx = len(post_steps)
+                post_steps.append(
+                    self._narration(
+                        location.id,
+                        fill(CONTINUATION_NARRATION[idx % len(CONTINUATION_NARRATION)]),
+                        visual_character=target.id if target else None,
+                        expression=emotion,
+                        present=present,
+                    )
+                )
             steps = pre_steps + [choice_step] + post_steps[:needed_post]
 
         who = short if target else "the room"

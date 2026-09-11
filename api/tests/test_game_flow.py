@@ -116,6 +116,51 @@ class TestBatchEndpoint:
         assert len(body["steps"]) > 0
         assert body["steps"][0]["index"] == 20
 
+    def test_batch_choice_submits_while_cursor_is_at_end_of_batch(self, client):
+        game_id = new_game(client)["game_id"]
+        # Skip opening to step 14, submit action, skip to step 19
+        client.post(f"/api/v1/games/{game_id}/skip", json={"until_step": 14})
+        client.post(
+            f"/api/v1/games/{game_id}/actions",
+            json={"input": "Go explore the rooftop everyone keeps mentioning."},
+        )
+        client.post(f"/api/v1/games/{game_id}/skip", json={"until_step": 19})
+
+        # Fetch 20-step batch 1 (steps 20 to 39, cursor moves to 39 on server)
+        batch_resp = client.get(
+            f"/api/v1/games/{game_id}/steps/batch",
+            params={"limit": 20, "wait_ms": 3000},
+        )
+        assert batch_resp.status_code == 200
+        steps = batch_resp.json()["steps"]
+        assert len(steps) == 20
+        assert steps[0]["index"] == 20
+
+        # Find the decision point placed at step 10-15 of the batch
+        decision_step = next((s for s in steps if s.get("type") in ("choice", "prompt")), None)
+        assert decision_step is not None
+        assert decision_step["index"] < 39, "decision point must be followed by buffer steps"
+
+        # Submit choice while cursor is 39
+        choice_id = decision_step["next_choices"][0]["id"]
+        choice_resp = client.post(
+            f"/api/v1/games/{game_id}/choices",
+            json={"step_id": decision_step["step_id"], "choice_id": choice_id},
+        )
+        assert choice_resp.status_code == 202
+        assert choice_resp.json()["batch_id"] is not None
+
+        # Fetch next batch (batch 2) — arrives as steps 40..59
+        next_batch_resp = client.get(
+            f"/api/v1/games/{game_id}/steps/batch",
+            params={"limit": 20, "wait_ms": 3000},
+        )
+        assert next_batch_resp.status_code == 200
+        next_body = next_batch_resp.json()
+        assert next_body["status"] == "ready"
+        assert len(next_body["steps"]) == 20
+        assert next_body["steps"][0]["index"] == 40
+
 
 class TestChoices:
     def test_a_choice_generates_the_next_run(self, client):

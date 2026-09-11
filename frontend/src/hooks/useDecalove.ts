@@ -9,7 +9,7 @@
 
 import { useCallback, useEffect, useReducer, useRef } from "react";
 import { api } from "../api/client";
-import { BATCH_LIMIT, WAIT_MS } from "../config";
+import { BATCH_LIMIT, PREFETCH_THRESHOLD, WAIT_MS } from "../config";
 import type { StepsBatchOut } from "../api/types";
 import {
   OPENING_AFTER_CHOICE,
@@ -45,6 +45,10 @@ export function useDecalove(): Decalove {
   // Guards a fetch already in flight: without it, a player clicking through an empty
   // buffer fires a second long poll behind the first and the batch arrives twice.
   const inFlight = useRef(false);
+
+  // Guards a prefetch already in flight. Separate from inFlight so a prefetch and a
+  // primary fetch do not block each other.
+  const prefetching = useRef(false);
 
   // The opening's server-side calls are ordered but not awaited by the UI -- the whole
   // point is that the rooftop scene plays while the engine writes. They still have to
@@ -125,12 +129,40 @@ export function useDecalove(): Decalove {
     }
   }, []);
 
+  /**
+   * Background prefetch: grab whatever is ready on the server (wait_ms=0) and append
+   * it to the buffer silently. If nothing is ready yet, just return — the player still
+   * has steps to read and will not notice. This is what makes clicking through 20+
+   * steps feel instant instead of pausing for 4 seconds at every batch boundary.
+   */
+  const prefetchNext = useCallback(async () => {
+    const { gameId, source } = latest.current;
+    if (!gameId || source === "opening" || prefetching.current || inFlight.current) return;
+    prefetching.current = true;
+
+    try {
+      // wait_ms=0: grab whatever is queued right now, don't hold the connection.
+      const body = await api.stepsBatch(gameId, BATCH_LIMIT, 0);
+      if (body && body.steps.length > 0) {
+        dispatch({ type: "batch/append", body });
+      }
+    } finally {
+      prefetching.current = false;
+    }
+  }, []);
+
   const advance = useCallback(() => {
     const current = latest.current;
     if (current.deciding || current.typing || current.busy) return;
 
     if (current.buffer.length > 0) {
       dispatch({ type: "advance" });
+
+      // When the buffer is running low, prefetch the next batch in the background
+      // so it is already loaded before the player exhausts the current one.
+      if (current.buffer.length <= PREFETCH_THRESHOLD) {
+        void prefetchNext();
+      }
       return;
     }
 
@@ -146,7 +178,7 @@ export function useDecalove(): Decalove {
     }
 
     void fetchNext();
-  }, [afterOpeningSync, fetchNext]);
+  }, [afterOpeningSync, fetchNext, prefetchNext]);
 
   const startNewGame = useCallback(() => dispatch({ type: "menu/new" }), []);
 
@@ -193,7 +225,7 @@ export function useDecalove(): Decalove {
 
   const chooseOption = useCallback(
     (choiceId: string) => {
-      const { current, gameId, source } = latest.current;
+      const { current, buffer, gameId, source } = latest.current;
       if (!current) return;
 
       if (source === "opening") {
@@ -203,9 +235,11 @@ export function useDecalove(): Decalove {
       }
 
       if (!gameId) return;
+      const stepId = current.step_id;
+      const hadBuffer = buffer.length > 0;
       dispatch({ type: "decision/submitted" });
       void (async () => {
-        const accepted = await api.submitChoice(gameId, current.step_id, choiceId);
+        const accepted = await api.submitChoice(gameId, stepId, choiceId);
         if (!accepted) {
           dispatch({
             type: "batch/failed",
@@ -213,10 +247,17 @@ export function useDecalove(): Decalove {
           });
           return;
         }
-        void fetchNext();
+        // If the buffer was already empty, we must fetch the next batch now.
+        // Otherwise, the player continues reading the remaining buffered steps
+        // (steps 15-19) seamlessly while Celery generates in the background.
+        if (!hadBuffer) {
+          void fetchNext();
+        } else {
+          void prefetchNext();
+        }
       })();
     },
-    [answerOpeningChoice, fetchNext],
+    [answerOpeningChoice, fetchNext, prefetchNext],
   );
 
   const submitFreeText = useCallback(
@@ -229,16 +270,18 @@ export function useDecalove(): Decalove {
         return;
       }
 
-      const { gameId, source } = latest.current;
+      const { current, buffer, gameId, source } = latest.current;
       if (source === "opening") {
         answerOpeningChoice(trimmed);
         return;
       }
       if (!gameId) return;
 
+      const stepId = current?.step_id;
+      const hadBuffer = buffer.length > 0;
       dispatch({ type: "decision/submitted" });
       void (async () => {
-        const accepted = await api.submitAction(gameId, trimmed);
+        const accepted = await api.submitAction(gameId, trimmed, stepId);
         if (!accepted) {
           dispatch({
             type: "batch/failed",
@@ -246,10 +289,14 @@ export function useDecalove(): Decalove {
           });
           return;
         }
-        void fetchNext();
+        if (!hadBuffer) {
+          void fetchNext();
+        } else {
+          void prefetchNext();
+        }
       })();
     },
-    [answerOpeningChoice, fetchNext],
+    [answerOpeningChoice, fetchNext, prefetchNext],
   );
 
   const openFreeText = useCallback(

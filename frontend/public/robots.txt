@@ -1,0 +1,8 @@
+# Decalove - AI-directed Visual Novel
+# https://love.nevatal.id
+
+User-agent: *
+Allow: /
+Disallow: /api/
+
+Sitemap: https://love.nevatal.id/sitemap.xml

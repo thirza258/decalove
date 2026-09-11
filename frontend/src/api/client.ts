@@ -136,10 +136,10 @@ export class DecaloveAPI {
     });
   }
 
-  submitAction(gameId: string, input: string) {
+  submitAction(gameId: string, input: string, stepId?: string | null) {
     return this.call<AcceptedOut>(`/games/${gameId}/actions`, {
       method: "POST",
-      payload: { input },
+      payload: { input, step_id: stepId },
     });
   }
 

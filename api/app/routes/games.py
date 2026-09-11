@@ -72,6 +72,7 @@ async def get_world(runtime: Runtime = RuntimeDep) -> WorldOut:
             )
             for location in world.locations
         ],
+        web_mode=runtime.settings.WEB_MODE,
     )
 
 
@@ -170,7 +171,9 @@ async def submit_action(
 ) -> AcceptedOut:
     """Natural-language input — PRD §8 Method B."""
     try:
-        batch, intent = await runtime.game_service.submit_action(game_id, request.input)
+        batch, intent = await runtime.game_service.submit_action(
+            game_id, request.input, step_id=request.step_id
+        )
     except GameNotFound as exc:
         raise _not_found(game_id) from exc
     except InvalidAction as exc:

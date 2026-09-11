@@ -42,14 +42,34 @@
 }
 
 html,
-body,
-#root {
+body {
   height: 100%;
   margin: 0;
   background: var(--color-vn-void);
   color: var(--color-vn-selected);
   font-family: "DejaVu Sans", ui-sans-serif, system-ui, sans-serif;
   overflow: hidden;
+}
+
+#root {
+  height: 100%;
+  overflow: auto;
+  scroll-behavior: smooth;
+}
+
+/* Dark-themed scrollbar for the landing page. */
+#root::-webkit-scrollbar {
+  width: 6px;
+}
+#root::-webkit-scrollbar-track {
+  background: transparent;
+}
+#root::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 3px;
+}
+#root::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
 }
 
 /* A dialogue box that reveals its text, and a click that completes the line. */

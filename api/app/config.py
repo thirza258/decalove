@@ -19,6 +19,12 @@ class Settings(BaseSettings):
     API_PREFIX: str = "/api/v1"
     CORS_ORIGINS: List[str] = ["*"]
 
+    #: Deployment mode. When ``True`` the API only serves images already in the asset
+    #: store (MinIO / local filesystem) and never generates new ones at runtime.
+    #: Story text generation continues normally. Use this for web deployments where
+    #: GPU resources are unavailable or image generation costs should be avoided.
+    WEB_MODE: bool = False
+
     # -- MongoDB ---------------------------------------------------------------------
     MONGODB_URL: str = "mongodb://root:rootpassword@localhost:27017"
     MONGODB_DB_NAME: str = "decalove_db"

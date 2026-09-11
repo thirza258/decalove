@@ -13,20 +13,39 @@ import type { Profile } from "../game/machine";
 const PANEL =
   "w-[790px] rounded-sm border border-vn-muted bg-vn-void/90 px-10 py-8 text-white";
 
-export function TitleScreen({ title, onStart }: { title: string; onStart: () => void }) {
+export function TitleScreen({
+  title,
+  onStart,
+  onHome,
+}: {
+  title: string;
+  onStart: () => void;
+  onHome?: () => void;
+}) {
   return (
     <Centered>
       <h1 className="text-[50px] tracking-wide text-white drop-shadow-lg">{title}</h1>
       <p className="mt-3 max-w-[640px] text-center text-[22px] text-vn-idle">
         A story that is written as you read it.
       </p>
-      <button
-        type="button"
-        onClick={onStart}
-        className="mt-10 cursor-pointer border-b-2 border-vn-accent px-8 py-2 text-[24px] text-vn-accent transition-colors hover:border-vn-hover hover:text-vn-hover"
-      >
-        New Game
-      </button>
+      <div className="mt-10 flex flex-col items-center gap-4">
+        <button
+          type="button"
+          onClick={onStart}
+          className="cursor-pointer border-b-2 border-vn-accent px-8 py-2 text-[24px] text-vn-accent transition-colors hover:border-vn-hover hover:text-vn-hover"
+        >
+          New Game
+        </button>
+        {onHome && (
+          <button
+            type="button"
+            onClick={onHome}
+            className="cursor-pointer text-[18px] text-vn-idle transition-colors hover:text-white"
+          >
+            About & Cast
+          </button>
+        )}
+      </div>
     </Centered>
   );
 }
