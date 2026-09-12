@@ -239,12 +239,24 @@ Return exactly {max_steps} steps."""
 
 def build_intent_prompt(world: World, session: GameSession, raw: str) -> str:
     cast = ", ".join(f"{c.id} ({c.name})" for c in world.characters)
-    present = ", ".join(session.world.present_characters) or "nobody"
+    # A web batch can include continuation beats after the question. Interpret the
+    # answer against what the player saw at that question, before those later beats.
+    recent = session.response_context_steps(8)
+    question = recent[-1] if recent and recent[-1].is_blocking else None
+    present = ", ".join(question.characters if question and question.characters else session.world.present_characters) or "nobody"
+    location = question.location if question else session.world.location
+    conversation = "\n".join(_render_step(step) for step in recent) or "    (no dialogue yet)"
     return f"""Classify what the player is trying to do. You are not writing story, only parsing.
 
 CAST: {cast}
 PRESENT RIGHT NOW: {present}
-LOCATION: {session.world.location}
+LOCATION: {location}
+
+CONVERSATION LEADING TO THIS RESPONSE:
+{conversation}
+
+Use this conversation to resolve references such as "her", "him", "that", or "do it".
+The player's words describe their own attempt, even when it differs from every offered option.
 
 PLAYER TYPED:
 "{raw}"

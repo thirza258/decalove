@@ -15,7 +15,7 @@ from typing import Any
 from app.config import settings
 from app.domain.direction import DecisionContext
 from app.domain.intent import PlayerIntent
-from app.domain.state import BatchState
+from app.domain.enums import BatchStatus
 from app.runtime import build_runtime
 from app.tasks.celery_app import (
     IMAGE_QUEUE,
@@ -34,7 +34,9 @@ if celery_app is not None:
 else:
     def _task_decorator(*args, **kwargs):
         def _wrapper(fn):
-            fn.delay = lambda *a, **kw: None
+            def unavailable(*a, **kw):
+                raise RuntimeError("Celery is not installed")
+            fn.delay = unavailable
             return fn
         return _wrapper
 
@@ -65,13 +67,17 @@ def generate_batch_task(
     async def _run():
         runtime = await build_runtime(settings)
         try:
+            if runtime.storage_backend != "mongo":
+                raise RuntimeError("Celery story jobs require shared MongoDB storage")
             intent = PlayerIntent.model_validate(intent_dict)
             decision = DecisionContext.model_validate(decision_dict)
             session = await runtime.games.get(game_id)
-            if session is None or session.ended:
+            if (session is None or session.ended or not session.pending
+                or session.pending.batch_id != batch_id
+                or session.pending.status is not BatchStatus.queued):
                 return {"status": "skipped", "game_id": game_id}
 
-            batch = BatchState(batch_id=batch_id, source=decision.kind.value)
+            batch = session.pending
             await runtime.generation._run_batch(
                 game_id,
                 batch,
@@ -81,7 +87,9 @@ def generate_batch_task(
                 prepared=None,
                 refine_input=refine_input,
             )
-            return {"status": "success", "game_id": game_id, "batch_id": batch_id}
+            updated = await runtime.games.get(game_id)
+            status = updated.pending.status.value if updated and updated.pending else "skipped"
+            return {"status": status, "game_id": game_id, "batch_id": batch_id}
         finally:
             # Closes this task's HTTP clients and MongoDB connection, which really are
             # per-runtime. The SDXL pipeline is not: it stays loaded in the process (see

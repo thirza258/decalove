@@ -20,6 +20,23 @@ The API must be running:
 cd ../api && uvicorn app.main:app --reload --port 8000
 ```
 
+Set `WEB_MODE=True` and `OPENROUTER_API_KEY` in `api/.env` for web story generation.
+The primary `OPENROUTER_MODEL` falls back to the comma-separated
+`OPENROUTER_FALLBACK_MODELS` (default: `openai/gpt-4.1-mini`). Each model gets a
+bounded attempt; failed requests, invalid responses, and timeouts try the next model.
+If all fail, a modal keeps the current scene and retries the original turn without
+starting a new game. With web mode disabled, the existing scripted fallback applies.
+
+For background workers use `TASK_QUEUE_BACKEND=celery` and `STORAGE_BACKEND=mongo`
+with Redis and the `story` worker running. The API and workers need the same settings.
+In-memory storage uses in-process tasks because separate workers cannot share its saves.
+Broker dispatch failures also fall back to in-process generation. A lost worker becomes
+a retryable failure after the generation deadline (at least 180 seconds).
+
+Playback polls automatically while generation is pending and prefetches while the
+player reads. Web batch requests include `after_index` so a lost HTTP response can
+be replayed safely; choice submissions carry an ID so retrying does not record them twice.
+
 `npm run build` produces a static `dist/` — plain files, no server-side rendering, so
 any static host will do. The API sends `access-control-allow-origin: *`, so the client
 can live on a different port or host; serve both over the *same scheme*, since a

@@ -29,6 +29,9 @@ export interface Profile {
 }
 
 export interface State {
+  waiting: boolean;
+  retryAfterMs: number;
+  error: { kind: "generation" | "connection" | "submission"; message: string } | null;
   phase: Phase;
   world: WorldOut | null;
   gameId: string | null;
@@ -58,6 +61,9 @@ export interface State {
 }
 
 export const initialState: State = {
+  waiting: false,
+  retryAfterMs: 700,
+  error: null,
   phase: "boot",
   world: null,
   gameId: null,
@@ -78,6 +84,9 @@ export const initialState: State = {
 };
 
 export type Action =
+  | { type: "playback/wait" }
+  | { type: "error"; kind: "generation" | "connection" | "submission"; message: string }
+  | { type: "error/retry" }
   | { type: "world/loaded"; world: WorldOut }
   | { type: "boot/failed"; message: string }
   | { type: "menu/new" }
@@ -129,11 +138,21 @@ function present(state: State, step: StoryStep, rest: StoryStep[]): State {
     ambient: null,
     ambientSeen: 0,
     busy: false,
+    waiting: false,
+    error: null,
+    phase: step.type === "ending" ? "ended" : state.phase,
+    seenEnding: state.seenEnding || step.type === "ending",
   };
 }
 
 export function reduce(state: State, action: Action): State {
   switch (action.type) {
+    case "playback/wait":
+      return { ...state, waiting: true };
+    case "error":
+      return { ...state, error: { kind: action.kind, message: action.message }, busy: false, waiting: false };
+    case "error/retry":
+      return { ...state, error: null, busy: true, offlineStreak: 0, pendingStreak: 0 };
     case "world/loaded":
       return { ...state, world: action.world, phase: state.phase === "boot" ? "menu" : state.phase };
 
@@ -159,7 +178,7 @@ export function reduce(state: State, action: Action): State {
 
     // The opening is done locally; everything after it comes from the engine.
     case "opening/handoff":
-      return { ...state, source: "api", buffer: [], deciding: false, typing: false };
+      return { ...state, source: "api", buffer: [], deciding: false, typing: false, waiting: true };
 
     case "busy":
       return { ...state, busy: action.busy };
@@ -178,9 +197,15 @@ export function reduce(state: State, action: Action): State {
       const body = action.body;
       const settled = { ...state, offlineStreak: 0, busy: false };
 
+      if (body.status === "failed") {
+        return { ...settled, waiting: false, error: {
+          kind: "generation", message: body.error ?? "The story could not continue. Please try again.",
+        } };
+      }
+
       if (body.status === "ready") {
         const steps = body.steps;
-        if (steps.length === 0) return { ...settled, pendingStreak: 0 };
+        if (steps.length === 0) return { ...settled, pendingStreak: state.pendingStreak + 1, waiting: true };
         const [first, ...rest] = steps;
         return present({ ...settled, pendingStreak: 0 }, first, rest);
       }
@@ -196,13 +221,16 @@ export function reduce(state: State, action: Action): State {
       if (body.status === "pending") {
         const streak = state.pendingStreak + 1;
         if (streak >= MAX_PENDING_POLLS) {
+          if (state.world?.web_mode) return reduce(settled, {
+            type: "error", kind: "connection", message: "The story is taking too long to respond. Please try again.",
+          });
           return {
             ...settled,
             phase: "offline",
             message: "The story engine stopped responding while writing.",
           };
         }
-        return { ...settled, pendingStreak: streak, ...nextAmbient(state, body.ambience) };
+        return { ...settled, waiting: true, retryAfterMs: Math.max(300, body.retry_after_ms), pendingStreak: streak, ...nextAmbient(state, body.ambience) };
       }
 
       // ended
@@ -231,7 +259,7 @@ export function reduce(state: State, action: Action): State {
       if (fresh.length === 0) return state;
 
       // If the player is waiting on an empty buffer, present the first fresh step.
-      if (!state.current && state.buffer.length === 0 && !state.deciding) {
+      if ((!state.current || state.waiting) && state.buffer.length === 0 && !state.deciding) {
         const [first, ...rest] = fresh;
         return present(state, first, rest);
       }
@@ -242,9 +270,12 @@ export function reduce(state: State, action: Action): State {
     case "batch/failed": {
       const streak = state.offlineStreak + 1;
       if (streak >= MAX_OFFLINE_STREAK) {
+        if (state.world?.web_mode) return reduce(state, {
+          type: "error", kind: "connection", message: action.message,
+        });
         return { ...state, busy: false, phase: "offline", message: action.message };
       }
-      return { ...state, busy: false, offlineStreak: streak };
+      return { ...state, busy: false, waiting: true, offlineStreak: streak };
     }
 
     case "decision/typing":
@@ -254,7 +285,7 @@ export function reduce(state: State, action: Action): State {
     // in a 20-step batch), immediately present the next step so the story continues
     // seamlessly while Celery / background worker generates the next batch.
     case "decision/submitted": {
-      const base = { ...state, deciding: false, typing: false, pendingStreak: 0 };
+      const base = { ...state, busy: false, waiting: true, deciding: false, typing: false, pendingStreak: 0 };
       if (base.buffer.length > 0) {
         const [next, ...rest] = base.buffer;
         return present(base, next, rest);

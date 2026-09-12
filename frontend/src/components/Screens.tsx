@@ -7,11 +7,35 @@
  * asking `/worlds` — if it answers, the save is what is gone, not the backend.
  */
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Profile } from "../game/machine";
 
 const PANEL =
   "w-[790px] rounded-sm border border-vn-muted bg-vn-void/90 px-10 py-8 text-white";
+
+export function GenerationErrorModal({ message, onRetry, onBack }: {
+  message: string; onRetry: () => void; onBack: () => void;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const element = dialog.current;
+    element?.showModal();
+    return () => element?.close();
+  }, []);
+  return (
+    <dialog ref={dialog} aria-labelledby="story-error-title" aria-describedby="story-error-message"
+      onCancel={(event) => event.preventDefault()}
+      className="m-auto w-[min(90vw,580px)] rounded-lg border border-vn-muted bg-vn-void p-8 text-white backdrop:bg-black/70">
+      <h2 id="story-error-title" className="text-2xl">The story needs a moment</h2>
+      <p id="story-error-message" className="mt-4 text-lg text-vn-idle">{message}</p>
+      <p className="mt-3 text-vn-idle">Your progress is kept. Retry to continue from here.</p>
+      <div className="mt-6 flex flex-wrap gap-4">
+        <button type="button" onClick={onRetry} className="cursor-pointer rounded bg-vn-muted px-5 py-3 text-vn-accent hover:bg-vn-hover-muted">Try again</button>
+        <button type="button" onClick={onBack} className="cursor-pointer px-5 py-3 text-vn-idle hover:text-white">New story</button>
+      </div>
+    </dialog>
+  );
+}
 
 export function TitleScreen({
   title,

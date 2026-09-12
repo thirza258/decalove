@@ -68,7 +68,7 @@ export const WAIT_MS = 4000;
 export const AMBIENT_LIMIT = 6;
 
 /** Give up on a game that has been pending for this many consecutive polls. */
-export const MAX_PENDING_POLLS = 30;
+export const MAX_PENDING_POLLS = 90;
 
 /** Consecutive transport failures before the offline screen. */
 export const MAX_OFFLINE_STREAK = 3;

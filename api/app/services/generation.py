@@ -21,6 +21,7 @@ import asyncio
 import contextlib
 import logging
 import uuid
+from datetime import datetime, timezone
 
 from app.agents.director import DirectorAgent
 from app.agents.memory_agent import MemoryAgent
@@ -133,8 +134,11 @@ class GenerationService:
         decision: DecisionContext,
         speculative_key: str | None = None,
         refine_input: str | None = None,
+        request_id: str | None = None,
+        history_entry: str | None = None,
+        record_style: bool = False,
     ) -> BatchState | None:
-        """Queue one generation cycle. Returns the batch, or ``None`` if one is already running.
+        """Queue one cycle, returning an existing active batch for duplicate submissions.
 
         ``refine_input`` is the player's raw text when the caller handed over a keyword
         intent and wants the model's reading of it. Parsed here rather than in the handler
@@ -144,6 +148,8 @@ class GenerationService:
             session = await self.games.get(game_id)
             if session is None or session.ended:
                 return None
+            if request_id and session.pending and session.pending.request_id == request_id:
+                return session.pending
             if session.pending and session.pending.status in (BatchStatus.queued, BatchStatus.running):
                 return session.pending
             if any(step.is_ending for step in session.queued):
@@ -156,36 +162,58 @@ class GenerationService:
                 batch_id=uuid.uuid4().hex,
                 status=BatchStatus.queued,
                 source=decision.kind.value,
+                intent=intent,
+                decision=decision,
+                refine_input=refine_input,
+                request_id=request_id,
             )
             session.pending = batch
             session.last_intent = intent
+            if history_entry:
+                session.history.append(history_entry)
+                session.played()
+            if record_style:
+                session.style.record(kind=decision.kind, risk=intent.risk.value, target=intent.target)
             await self.games.save(session)
             snapshot = session
 
         prepared = self._pop_speculation(speculative_key)
         if self.task_backend == "celery":
-            try:
-                from app.tasks.generation_tasks import generate_batch_task
-                generate_batch_task.delay(
-                    game_id=game_id,
-                    batch_id=batch.batch_id,
-                    intent_dict=intent.model_dump(),
-                    decision_dict=decision.model_dump(),
-                    speculative_key=speculative_key,
-                    refine_input=refine_input,
-                )
-            except Exception:
-                log.warning("failed to dispatch batch to Celery, falling back to in-process async", exc_info=True)
-                self._spawn(
-                    self._run_batch(
-                        game_id, batch, intent, decision, snapshot, prepared, refine_input
-                    )
-                )
+            self._spawn(self._dispatch_batch(
+                game_id, batch, intent, decision, snapshot, prepared, refine_input
+            ))
         else:
             self._spawn(
                 self._run_batch(game_id, batch, intent, decision, snapshot, prepared, refine_input)
             )
         return batch
+
+    async def _dispatch_batch(
+        self,
+        game_id: str,
+        batch: BatchState,
+        intent: PlayerIntent,
+        decision: DecisionContext,
+        snapshot: GameSession,
+        prepared: tuple[RunResult, Directive] | None,
+        refine_input: str | None,
+    ) -> None:
+        # Publishing is synchronous network I/O. Keep Redis outages off the HTTP loop.
+        if self.task_backend == "celery":
+            try:
+                from app.tasks.generation_tasks import generate_batch_task
+                await asyncio.to_thread(generate_batch_task.delay,
+                    game_id=game_id,
+                    batch_id=batch.batch_id,
+                    intent_dict=intent.model_dump(),
+                    decision_dict=decision.model_dump(),
+                    refine_input=refine_input,
+                )
+            except Exception:
+                log.warning("failed to dispatch batch to Celery, falling back to in-process async", exc_info=True)
+                await self._run_batch(
+                    game_id, batch, intent, decision, snapshot, prepared, refine_input
+                )
 
     def _pop_speculation(self, key: str | None) -> tuple[RunResult, Directive] | None:
         """Take the branch the player chose and discard the ones they did not.
@@ -213,18 +241,36 @@ class GenerationService:
         prepared: tuple[RunResult, Directive] | None,
         refine_input: str | None = None,
     ) -> None:
-        batch.status = BatchStatus.running
+        # Claim only the current queued job; duplicate deliveries cannot append twice.
+        for attempt in range(ASSET_PATCH_ATTEMPTS):
+            async with self.lock(game_id):
+                current = await self.games.get(game_id)
+                if (current is None or current.ended or not current.pending
+                    or current.pending.batch_id != batch.batch_id
+                    or current.pending.status is not BatchStatus.queued):
+                    return
+                claimed = current.pending.model_copy(update={"status": BatchStatus.running})
+                current.pending = claimed
+                try:
+                    await self.games.save(current)
+                except StaleSessionError:
+                    if attempt == ASSET_PATCH_ATTEMPTS - 1:
+                        raise
+                    continue
+                batch = claimed
+                break
         record_style: DecisionKind | None = None
-        if refine_input:
-            intent = await self._refine_intent(snapshot, intent, refine_input)
-            # The handler deliberately did not record this turn's style: the keyword intent
-            # it had was a placeholder, and PlayerStyle.targets is what picks the ending
-            # (agents/ending.py). Record it here, from the intent the run is written to.
-            record_style = decision.kind
-        directive = self.director.plan(
-            snapshot, intent, decision, max_steps=self.narrative.max_steps
-        )
+        directive = None
         try:
+            if refine_input:
+                intent = await self._refine_intent(snapshot, intent, refine_input)
+                # The handler deliberately did not record this turn's style: the keyword intent
+                # it had was a placeholder, and PlayerStyle.targets is what picks the ending
+                # (agents/ending.py). Record it here, from the intent the run is written to.
+                record_style = decision.kind
+            directive = self.director.plan(
+                snapshot, intent, decision, max_steps=self.narrative.max_steps
+            )
             if prepared is not None:
                 result, directive = prepared
             else:
@@ -233,18 +279,27 @@ class GenerationService:
                 )
         except asyncio.TimeoutError:
             log.warning("generation for %s timed out after %.0fs", game_id, self.timeout_s)
+            if self.narrative.web_mode:
+                await self._mark_failed(game_id, batch, "Story generation timed out. Please try again.")
+                return
             result = self._scripted(snapshot, intent, directive)
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 - the game must survive any generator failure
             log.exception("generation for %s failed unexpectedly", game_id)
+            if self.narrative.web_mode:
+                await self._mark_failed(game_id, batch, "All story AI attempts failed. Please try again.")
+                return
             result = self._scripted(snapshot, intent, directive)
 
         try:
             await self.commit_run(game_id, batch, result, intent, directive, record_style=record_style)
-        except StaleSessionError as exc:
+        except Exception as exc:
             log.error("could not commit batch %s for %s: %s", batch.batch_id, game_id, exc)
-            await self._mark_failed(game_id, batch, str(exc))
+            await self._mark_failed(
+                game_id, batch,
+                "The story could not be saved. Please try again." if self.narrative.web_mode else str(exc),
+            )
             return
 
         if self.speculative_branches > 0:
@@ -289,7 +344,15 @@ class GenerationService:
             )
             or intent.action
         )
-        memories = await self.memory.recall(snapshot.id, query, characters=focus)
+        try:
+            recall = self.memory.recall(snapshot.id, query, characters=focus)
+            memories = await asyncio.wait_for(recall, timeout=5) if self.narrative.web_mode else await recall
+        except Exception:
+            if not self.narrative.web_mode:
+                raise
+            # Recent dialogue and state remain in the prompt even if retrieval is down.
+            log.warning("memory recall unavailable for %s", snapshot.id, exc_info=True)
+            memories = []
         return await self.narrative.generate(
             snapshot, intent, memories, decision=decision, directive=directive
         )
@@ -333,7 +396,13 @@ class GenerationService:
         not, the opening scene's backgrounds were never requested, so a player who only
         saw the first scene never got any generated art at all.
         """
-        misses = await self._commit(game_id, batch, result, intent, directive, record_style=record_style)
+        for attempt in range(ASSET_PATCH_ATTEMPTS):
+            try:
+                misses = await self._commit(game_id, batch, result, intent, directive, record_style=record_style)
+                break
+            except StaleSessionError:
+                if attempt == ASSET_PATCH_ATTEMPTS - 1:
+                    raise
         # Rolled here, not in the worker. At the default 5% probability, gating downstream
         # meant nineteen of every twenty image jobs were queued, routed to the GPU worker
         # and given a whole runtime just to decide to do nothing -- ahead of the ones that
@@ -345,7 +414,7 @@ class GenerationService:
                     from app.tasks.generation_tasks import generate_assets_task
                     session = await self.games.get(game_id)
                     world_id = session.world_id if session else ""
-                    generate_assets_task.delay(
+                    await asyncio.to_thread(generate_assets_task.delay,
                         game_id=game_id,
                         specs_dicts=[spec.to_payload() for spec in misses],
                         world_id=world_id,
@@ -374,6 +443,14 @@ class GenerationService:
                 return []
             if session.ended:
                 log.info("discarding batch %s: %s has already ended", batch.batch_id, game_id)
+                return []
+
+            if batch.batch_id != "opening" and (
+                not session.pending or session.pending.batch_id != batch.batch_id
+                or session.pending.status not in (BatchStatus.queued, BatchStatus.running)
+            ):
+                return []
+            if any(step.batch_id == batch.batch_id for step in session.steps):
                 return []
 
             base = len(session.steps)
@@ -421,14 +498,12 @@ class GenerationService:
             if directive is not None:
                 # Read back when planning the next run, so pacing has memory.
                 session.last_directive = directive
-            session.pending = BatchState(
-                batch_id=batch.batch_id,
-                status=BatchStatus.ready,
-                source=batch.source,
-                step_count=len(result.steps),
-                used_fallback=result.used_fallback,
-                created_at=batch.created_at,
-            )
+            session.pending = batch.model_copy(update={
+                "status": BatchStatus.ready,
+                "step_count": len(result.steps),
+                "used_fallback": result.used_fallback,
+                "finished_at": datetime.now(timezone.utc),
+            })
             await self.games.save(session)
 
         # De-duplicate: one batch usually reuses the same background across every beat.
@@ -436,19 +511,40 @@ class GenerationService:
         return list(unique.values())
 
     async def _mark_failed(self, game_id: str, batch: BatchState, error: str) -> None:
-        async with self.lock(game_id):
-            session = await self.games.get(game_id)
-            if session is None:
-                return
-            session.pending = BatchState(
-                batch_id=batch.batch_id,
-                status=BatchStatus.failed,
-                source=batch.source,
-                error=error,
-                created_at=batch.created_at,
-            )
-            with contextlib.suppress(StaleSessionError):
-                await self.games.save(session)
+        for _ in range(ASSET_PATCH_ATTEMPTS):
+            async with self.lock(game_id):
+                session = await self.games.get(game_id)
+                if (session is None or not session.pending
+                    or session.pending.batch_id != batch.batch_id
+                    or session.pending.status not in (BatchStatus.queued, BatchStatus.running)):
+                    return
+                session.pending = session.pending.model_copy(update={
+                    "status": BatchStatus.failed, "error": error,
+                    "finished_at": datetime.now(timezone.utc),
+                })
+                try:
+                    await self.games.save(session)
+                    return
+                except StaleSessionError:
+                    continue
+        log.error("could not persist failure for batch %s", batch.batch_id)
+
+    async def expire_pending(self, session: GameSession) -> None:
+        """Called under the game lock by web polling, including after a worker dies."""
+        batch = session.pending
+        if not self.narrative.web_mode or not batch or batch.status not in (
+            BatchStatus.queued, BatchStatus.running
+        ):
+            return
+        created = batch.created_at.replace(tzinfo=timezone.utc) if not batch.created_at.tzinfo else batch.created_at
+        if (datetime.now(timezone.utc) - created).total_seconds() < max(180, self.timeout_s + 60):
+            return
+        session.pending = batch.model_copy(update={
+            "status": BatchStatus.failed,
+            "error": "The story service did not finish in time. Please try again.",
+            "finished_at": datetime.now(timezone.utc),
+        })
+        await self.games.save(session)
 
     # -- images --------------------------------------------------------------------------
 

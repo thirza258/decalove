@@ -75,8 +75,12 @@ class Runtime:
             "world": self.world.id,
             "web_mode": self.settings.WEB_MODE,
             "storage": self.storage_backend,
+            "task_queue": self.generation.task_backend,
             "assets": self.asset_backend,
-            "narrative": self.chat.name if self.chat else "scripted (no OPENROUTER_API_KEY)",
+            "narrative": self.chat.name if self.chat else (
+                "unavailable (no OPENROUTER_API_KEY)" if self.settings.WEB_MODE
+                else "scripted (no OPENROUTER_API_KEY)"
+            ),
             "images": (
                 self.image.name
                 if (self.image and self.settings.IMAGE_GENERATION_ENABLED)
@@ -92,7 +96,7 @@ class Runtime:
     async def close(self) -> None:
         await self.maintenance.stop()
         await self.generation.shutdown()
-        for provider in (self.chat, self.image, self.embedder):
+        for provider in (self.chat, self.image, self.embedder, *self.generation.narrative.fallback_chats):
             closer = getattr(provider, "aclose", None)
             if closer is not None:
                 await closer()
@@ -218,6 +222,8 @@ def _build_providers(
             require_parameters=settings.OPENROUTER_REQUIRE_PARAMETERS,
             **openrouter,
         )
+    elif settings.WEB_MODE:
+        log.warning("No OPENROUTER_API_KEY set - web stories cannot continue beyond the opening.")
     else:
         log.warning(
             "No OPENROUTER_API_KEY set - running on the scripted narrator. "
@@ -250,6 +256,24 @@ async def build_runtime(settings: Settings) -> Runtime:
     games, memories, assets_repo, storage_backend = await _build_persistence(settings)
     store, asset_backend = _build_asset_store(settings)
     chat, image, embedder = _build_providers(settings)
+    fallback_chats = []
+    if settings.WEB_MODE and settings.has_llm:
+        seen = {settings.OPENROUTER_MODEL}
+        for model in settings.OPENROUTER_FALLBACK_MODELS.split(","):
+            model = model.strip()
+            if not model or model in seen:
+                continue
+            seen.add(model)
+            fallback_chats.append(OpenRouterChat(
+                model=model,
+                api_key=settings.OPENROUTER_API_KEY,
+                base_url=settings.OPENROUTER_BASE_URL,
+                timeout=settings.OPENROUTER_TIMEOUT_S,
+                max_retries=settings.OPENROUTER_MAX_RETRIES,
+                require_parameters=settings.OPENROUTER_REQUIRE_PARAMETERS,
+                referer=settings.OPENROUTER_SITE_URL,
+                title=settings.OPENROUTER_APP_NAME,
+            ))
 
     safety = SafetyFilter(settings.CONTENT_RATING)
     validator = Validator(
@@ -277,6 +301,13 @@ async def build_runtime(settings: Settings) -> Runtime:
         rating=settings.CONTENT_RATING,
         min_choices=settings.MIN_CHOICES,
         max_choices=settings.MAX_CHOICES,
+        web_mode=settings.WEB_MODE,
+        fallback_chats=fallback_chats,
+        # Leave time for every model, even when the primary hangs.
+        attempt_timeout_s=max(0.01, min(
+            settings.WEB_AI_ATTEMPT_TIMEOUT_S,
+            (settings.GENERATION_TIMEOUT_S - 5) / (1 + len(fallback_chats)),
+        )),
     )
     visual = VisualAgent(
         world,
@@ -313,7 +344,9 @@ async def build_runtime(settings: Settings) -> Runtime:
         assets=asset_service,
         timeout_s=settings.GENERATION_TIMEOUT_S,
         speculative_branches=settings.SPECULATIVE_PREFETCH_MAX_BRANCHES,
-        task_backend=settings.TASK_QUEUE_BACKEND,
+        task_backend=(
+            settings.TASK_QUEUE_BACKEND if storage_backend == "mongo" else "asyncio"
+        ),
     )
     game_service = GameService(
         world=world,

@@ -136,11 +136,12 @@ async def next_batch(
     game_id: str,
     limit: int = Query(default=20, ge=1, le=100, description="maximum number of steps to fetch in this batch"),
     wait_ms: int = Query(default=0, ge=0, le=30000, description="hold the request briefly if steps are pending"),
+    after_index: int | None = Query(default=None, ge=-1, description="replay web steps after the last received index"),
     runtime: Runtime = RuntimeDep,
 ) -> StepsBatchOut:
     """Fetch an entire batch of queued steps at once for client-side local playback."""
     try:
-        return await runtime.game_service.next_batch(game_id, limit=limit, wait_ms=wait_ms)
+        return await runtime.game_service.next_batch(game_id, limit=limit, wait_ms=wait_ms, after_index=after_index)
     except GameNotFound as exc:
         raise _not_found(game_id) from exc
 
@@ -172,7 +173,7 @@ async def submit_action(
     """Natural-language input — PRD §8 Method B."""
     try:
         batch, intent = await runtime.game_service.submit_action(
-            game_id, request.input, step_id=request.step_id
+            game_id, request.input, step_id=request.step_id, request_id=request.request_id
         )
     except GameNotFound as exc:
         raise _not_found(game_id) from exc
@@ -199,7 +200,7 @@ async def submit_choice(
     """Traditional visual-novel choice — PRD §8 Method A."""
     try:
         batch, intent = await runtime.game_service.submit_choice(
-            game_id, request.step_id, request.choice_id
+            game_id, request.step_id, request.choice_id, request_id=request.request_id
         )
     except GameNotFound as exc:
         raise _not_found(game_id) from exc
@@ -216,4 +217,18 @@ async def submit_choice(
             risk=intent.risk.value,
             meaningful=intent.meaningful,
         ),
+    )
+
+
+@router.post("/games/{game_id}/generation/retry", response_model=AcceptedOut, status_code=status.HTTP_202_ACCEPTED)
+async def retry_generation(game_id: str, runtime: Runtime = RuntimeDep) -> AcceptedOut:
+    try:
+        batch = await runtime.game_service.retry_generation(game_id)
+    except GameNotFound as exc:
+        raise _not_found(game_id) from exc
+    except InvalidAction as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    return AcceptedOut(
+        game_id=game_id, batch_id=batch.batch_id if batch else None,
+        status=batch.status if batch else None,
     )

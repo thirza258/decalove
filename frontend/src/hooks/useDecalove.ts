@@ -1,21 +1,9 @@
-/**
- * The driver: everything in `decalove_beat` that touches the network.
- *
- * `machine.ts` decides what a result means; this decides when to ask. The split
- * matters because the interesting rules — ambient cycling, the streak counters, the
- * ending guard — are then pure and readable in one place, instead of tangled through
- * effects.
- */
-
+/** Network driver for buffered playback and recoverable background generation. */
 import { useCallback, useEffect, useReducer, useRef } from "react";
 import { api } from "../api/client";
 import { BATCH_LIMIT, PREFETCH_THRESHOLD, WAIT_MS } from "../config";
-import type { StepsBatchOut } from "../api/types";
 import {
-  OPENING_AFTER_CHOICE,
-  OPENING_BEFORE_CHOICE,
-  OPENING_CHOICE_STEP,
-  OPENING_LAST_STEP,
+  OPENING_AFTER_CHOICE, OPENING_BEFORE_CHOICE, OPENING_CHOICE_STEP, OPENING_LAST_STEP,
 } from "../game/opening";
 import { initialState, reduce, type Profile, type State } from "../game/machine";
 
@@ -29,292 +17,217 @@ export interface Decalove {
   submitFreeText: (text: string) => void;
   openFreeText: (open: boolean) => void;
   backToMenu: () => void;
+  retry: () => void;
 }
 
 export function useDecalove(): Decalove {
   const [state, dispatch] = useReducer(reduce, initialState);
-
-  // Read inside async callbacks, which would otherwise close over a stale snapshot.
-  // Written after commit rather than during render; every reader is an event handler
-  // or an async continuation, so all of them run after this has flushed.
   const latest = useRef(state);
-  useEffect(() => {
-    latest.current = state;
-  });
+  useEffect(() => { latest.current = state; });
 
-  // Guards a fetch already in flight: without it, a player clicking through an empty
-  // buffer fires a second long poll behind the first and the batch arrives twice.
-  const inFlight = useRef(false);
-
-  // Guards a prefetch already in flight. Separate from inFlight so a prefetch and a
-  // primary fetch do not block each other.
-  const prefetching = useRef(false);
-
-  // The opening's server-side calls are ordered but not awaited by the UI -- the whole
-  // point is that the rooftop scene plays while the engine writes. They still have to
-  // reach the server in order, though: skip(19) landing before skip(14) and the action
-  // would submit the player's choice against the wrong cursor. Chaining them here keeps
-  // the ordering without making the player wait for any of it.
-  const openingSync = useRef<Promise<unknown>>(Promise.resolve());
-
-  const afterOpeningSync = useCallback((work: () => Promise<unknown>) => {
-    openingSync.current = openingSync.current.then(work, work);
-    return openingSync.current;
-  }, []);
+  // One delivery request at a time: both endpoints advance the server cursor.
+  const fetching = useRef(false);
+  const submitting = useRef(false);
+  const epoch = useRef(0);
+  const retryOperation = useRef<(() => Promise<void>) | null>(null);
+  const wantsNext = useRef(false);
+  const receivedIndex = useRef(OPENING_LAST_STEP);
 
   useEffect(() => {
     let cancelled = false;
-    void (async () => {
-      const world = await api.world();
+    void api.world().then((world) => {
       if (cancelled) return;
-      if (!world) {
-        dispatch({
-          type: "boot/failed",
-          message: api.lastError ?? "No response from the story engine.",
-        });
-        return;
-      }
-      dispatch({ type: "world/loaded", world });
-    })();
-    return () => {
-      cancelled = true;
-    };
+      dispatch(world ? { type: "world/loaded", world } : {
+        type: "boot/failed", message: "Cannot connect to the story service. Please try again shortly.",
+      });
+    });
+    return () => { cancelled = true; };
   }, []);
 
-  const fetchNext = useCallback(async () => {
-    const { gameId } = latest.current;
-    if (!gameId || inFlight.current) return;
-    inFlight.current = true;
-    dispatch({ type: "busy", busy: true });
+  useEffect(() => () => { epoch.current += 1; }, []);
 
-    try {
-      let body: StepsBatchOut | null = await api.stepsBatch(gameId, BATCH_LIMIT, WAIT_MS);
-
-      if (!body) {
-        // The single-step endpoint, kept as the fallback the Ren'Py client keeps too.
-        const single = await api.nextStep(gameId, WAIT_MS);
-        if (single) {
-          body = {
-            status: single.status,
-            steps: single.step ? [single.step] : [],
-            queue_depth: single.queue_depth,
-            retry_after_ms: single.retry_after_ms,
-            ambience: single.ambience,
-          };
-        }
-      }
-
-      if (!body) {
-        // Two signals, no status-code parsing: if /worlds still answers, the server is
-        // up and it is the save that is gone. Telling someone to restart a healthy
-        // server would send them chasing the wrong problem.
-        const alive = await api.world();
-        if (alive) {
-          const stillThere = await api.gameState(gameId);
-          if (!stillThere) {
-            dispatch({ type: "expired" });
-            return;
-          }
-        }
-        dispatch({
-          type: "batch/failed",
-          message: api.lastError ?? "No response from the server.",
-        });
-        return;
-      }
-
-      dispatch({ type: "batch/received", body });
-    } finally {
-      inFlight.current = false;
-    }
+  const showError = useCallback((kind: "generation" | "connection" | "submission", message: string) => {
+    dispatch(latest.current.world?.web_mode
+      ? { type: "error", kind, message }
+      : { type: "offline", message });
   }, []);
 
-  /**
-   * Background prefetch: grab whatever is ready on the server (wait_ms=0) and append
-   * it to the buffer silently. If nothing is ready yet, just return — the player still
-   * has steps to read and will not notice. This is what makes clicking through 20+
-   * steps feel instant instead of pausing for 4 seconds at every batch boundary.
-   */
-  const prefetchNext = useCallback(async () => {
+  const fetchNext = useCallback(async (background = false) => {
     const { gameId, source } = latest.current;
-    if (!gameId || source === "opening" || prefetching.current || inFlight.current) return;
-    prefetching.current = true;
-
+    if (!gameId || source === "opening" || submitting.current) return;
+    if (!background) {
+      wantsNext.current = true;
+      dispatch({ type: "playback/wait" });
+    }
+    if (fetching.current) return;
+    fetching.current = true;
+    const token = epoch.current;
+    if (!background) dispatch({ type: "busy", busy: true });
     try {
-      // wait_ms=0: grab whatever is queued right now, don't hold the connection.
-      const body = await api.stepsBatch(gameId, BATCH_LIMIT, 0);
-      if (body && body.steps.length > 0) {
-        dispatch({ type: "batch/append", body });
+      const body = await api.stepsBatch(gameId, BATCH_LIMIT, background ? 0 : WAIT_MS, receivedIndex.current);
+      if (token !== epoch.current) return;
+      if (!body) {
+        if (api.lastStatus === 404) {
+          dispatch({ type: "expired" });
+        } else if (wantsNext.current) {
+          dispatch({ type: "batch/failed", message: "The connection was interrupted. Your story is still here. Please try again." });
+        }
+        return;
       }
+      if (body.status === "ready") {
+        for (const step of body.steps) receivedIndex.current = Math.max(receivedIndex.current, step.index);
+      }
+      const foreground = wantsNext.current;
+      if (foreground && body.status !== "pending") wantsNext.current = false;
+      dispatch({ type: foreground ? "batch/received" : "batch/append", body });
     } finally {
-      prefetching.current = false;
+      if (token === epoch.current) fetching.current = false;
     }
   }, []);
+
+  // Continue polling without clicks. Prefetch only after the current run's decision
+  // has been answered; fetching before then could skip the player's turn.
+  useEffect(() => {
+    if (state.phase !== "story" || state.source !== "api" || state.error || state.busy || state.deciding || state.typing) return;
+    const waiting = state.waiting;
+    const canPrefetch = state.buffer.length > 0 && state.buffer.length <= PREFETCH_THRESHOLD
+      && !state.buffer.some((step) => step.type === "choice" || step.type === "prompt" || step.type === "ending");
+    if (!waiting && !canPrefetch) return;
+    const timer = setInterval(() => { void fetchNext(!waiting); }, state.retryAfterMs);
+    return () => clearInterval(timer);
+  }, [state, fetchNext]);
+
+  const runSubmission = useCallback(async (operation: () => Promise<void>) => {
+    if (submitting.current) return;
+    submitting.current = true;
+    const token = epoch.current;
+    retryOperation.current = operation;
+    dispatch({ type: "busy", busy: true });
+    try { await operation(); }
+    finally {
+      if (token === epoch.current) {
+        submitting.current = false;
+        dispatch({ type: "busy", busy: false });
+      }
+    }
+  }, []);
+
+  const handoff = useCallback(() => {
+    const { gameId } = latest.current;
+    if (!gameId) return;
+    const token = epoch.current;
+    void runSubmission(async () => {
+      const synced = await api.skipToStep(gameId, OPENING_LAST_STEP);
+      if (token !== epoch.current) return;
+      if (!synced) {
+        showError("submission", "Could not reconnect to your story. Please try again.");
+        return;
+      }
+      retryOperation.current = null;
+      dispatch({ type: "opening/handoff" });
+    });
+  }, [runSubmission, showError]);
 
   const advance = useCallback(() => {
     const current = latest.current;
-    if (current.deciding || current.typing || current.busy) return;
+    if (current.phase !== "story" || current.deciding || current.typing || current.busy || current.error || submitting.current) return;
+    if (current.buffer.length > 0) dispatch({ type: "advance" });
+    else if (current.source === "opening") handoff();
+    else void fetchNext();
+  }, [fetchNext, handoff]);
 
-    if (current.buffer.length > 0) {
-      dispatch({ type: "advance" });
-
-      // When the buffer is running low, prefetch the next batch in the background
-      // so it is already loaded before the player exhausts the current one.
-      if (current.buffer.length <= PREFETCH_THRESHOLD) {
-        void prefetchNext();
-      }
-      return;
-    }
-
-    // The authored opening has run out. Fast-forward the server cursor through the
-    // beats the client played locally, then hand playback to the engine.
-    if (current.source === "opening") {
-      dispatch({ type: "opening/handoff" });
-      void afterOpeningSync(async () => {
-        if (current.gameId) await api.skipToStep(current.gameId, OPENING_LAST_STEP);
-        return fetchNext();
-      });
-      return;
-    }
-
-    void fetchNext();
-  }, [afterOpeningSync, fetchNext, prefetchNext]);
-
-  const startNewGame = useCallback(() => dispatch({ type: "menu/new" }), []);
+  const startNewGame = useCallback(() => {
+    epoch.current += 1;
+    fetching.current = false;
+    submitting.current = false;
+    wantsNext.current = false;
+    receivedIndex.current = OPENING_LAST_STEP;
+    retryOperation.current = null;
+    dispatch({ type: "menu/new" });
+  }, []);
 
   const submitSetup = useCallback((profile: Profile) => {
+    if (submitting.current) return;
     dispatch({ type: "setup/submit", profile });
-    void (async () => {
-      const game = await api.newGame({
-        player_name: profile.name || "You",
-        pronouns: profile.pronouns,
-        tone: profile.tone,
-      });
+    const token = epoch.current;
+    void runSubmission(async () => {
+      const game = await api.newGame({ player_name: profile.name || "You", pronouns: profile.pronouns, tone: profile.tone });
+      if (token !== epoch.current) return;
       if (!game) {
-        dispatch({
-          type: "offline",
-          message: api.lastError ?? "Could not start a new game.",
-        });
+        dispatch({ type: "offline", message: "Could not start a new story. Please try again." });
         return;
       }
+      retryOperation.current = null;
       dispatch({ type: "game/started", gameId: game.game_id });
-    })();
-  }, []);
+    });
+  }, [runSubmission]);
 
   const finishIntro = useCallback(() => {
     dispatch({ type: "intro/done" });
     dispatch({ type: "opening/start", steps: OPENING_BEFORE_CHOICE });
   }, []);
 
-  const answerOpeningChoice = useCallback(
-    (text: string) => {
-      const { gameId } = latest.current;
-      // Both calls, in this order: the skip commits the beats the client played on its
-      // own, and the action is what sets the engine writing while the rooftop scene
-      // plays. Getting the order wrong would submit against the wrong cursor.
-      void afterOpeningSync(async () => {
-        if (!gameId) return;
-        await api.skipToStep(gameId, OPENING_CHOICE_STEP);
-        await api.submitAction(gameId, text);
+  const answer = useCallback((kind: "choice" | "text", value: string) => {
+    const { current, gameId, source, deciding, error } = latest.current;
+    if (!current || !gameId || !deciding || error || submitting.current) return;
+    const token = epoch.current;
+    const requestId = crypto.randomUUID();
+    void runSubmission(async () => {
+      if (source === "opening") {
+        const synced = await api.skipToStep(gameId, OPENING_CHOICE_STEP);
+        if (token !== epoch.current) return;
+        if (!synced) {
+          showError("submission", "Could not send your choice. Please try again.");
+          return;
+        }
+      }
+      const text = kind === "choice" ? current.next_choices.find((choice) => choice.id === value)?.text ?? value : value;
+      const accepted = kind === "choice" && source !== "opening"
+        ? await api.submitChoice(gameId, current.step_id, value, requestId)
+        : await api.submitAction(gameId, text, source === "opening" ? undefined : current.step_id, requestId);
+      if (token !== epoch.current) return;
+      if (!accepted?.batch_id) {
+        showError("submission", "Could not send your choice. Please try again.");
+        return;
+      }
+      retryOperation.current = null;
+      dispatch({ type: "decision/submitted" });
+      if (source === "opening") dispatch({ type: "opening/start", steps: OPENING_AFTER_CHOICE });
+    });
+  }, [runSubmission, showError]);
+
+  const retry = useCallback(() => {
+    const { error, gameId } = latest.current;
+    if (!error || submitting.current || fetching.current) return;
+    dispatch({ type: "error/retry" });
+    if (error.kind === "submission" && retryOperation.current) {
+      void runSubmission(retryOperation.current);
+      return;
+    }
+    if (error.kind === "generation" && gameId) {
+      const token = epoch.current;
+      void runSubmission(async () => {
+        const accepted = await api.retryGeneration(gameId);
+        if (token !== epoch.current) return;
+        if (!accepted?.batch_id) {
+          showError("generation", "The story service is still unavailable. Please try again shortly.");
+          return;
+        }
+        dispatch({ type: "playback/wait" });
       });
-      dispatch({ type: "decision/submitted" });
-      dispatch({ type: "opening/start", steps: OPENING_AFTER_CHOICE });
-    },
-    [afterOpeningSync],
-  );
-
-  const chooseOption = useCallback(
-    (choiceId: string) => {
-      const { current, buffer, gameId, source } = latest.current;
-      if (!current) return;
-
-      if (source === "opening") {
-        const picked = current.next_choices.find((c) => c.id === choiceId);
-        answerOpeningChoice(picked?.text ?? choiceId);
-        return;
-      }
-
-      if (!gameId) return;
-      const stepId = current.step_id;
-      const hadBuffer = buffer.length > 0;
-      dispatch({ type: "decision/submitted" });
-      void (async () => {
-        const accepted = await api.submitChoice(gameId, stepId, choiceId);
-        if (!accepted) {
-          dispatch({
-            type: "batch/failed",
-            message: api.lastError ?? "Could not send that choice.",
-          });
-          return;
-        }
-        // If the buffer was already empty, we must fetch the next batch now.
-        // Otherwise, the player continues reading the remaining buffered steps
-        // (steps 15-19) seamlessly while Celery generates in the background.
-        if (!hadBuffer) {
-          void fetchNext();
-        } else {
-          void prefetchNext();
-        }
-      })();
-    },
-    [answerOpeningChoice, fetchNext, prefetchNext],
-  );
-
-  const submitFreeText = useCallback(
-    (text: string) => {
-      const trimmed = text.trim();
-      // An empty answer re-offers the same decision point: the server still has it as
-      // the head of the ledger, so nothing has been lost.
-      if (!trimmed) {
-        dispatch({ type: "decision/typing", open: false });
-        return;
-      }
-
-      const { current, buffer, gameId, source } = latest.current;
-      if (source === "opening") {
-        answerOpeningChoice(trimmed);
-        return;
-      }
-      if (!gameId) return;
-
-      const stepId = current?.step_id;
-      const hadBuffer = buffer.length > 0;
-      dispatch({ type: "decision/submitted" });
-      void (async () => {
-        const accepted = await api.submitAction(gameId, trimmed, stepId);
-        if (!accepted) {
-          dispatch({
-            type: "batch/failed",
-            message: api.lastError ?? "Could not send that.",
-          });
-          return;
-        }
-        if (!hadBuffer) {
-          void fetchNext();
-        } else {
-          void prefetchNext();
-        }
-      })();
-    },
-    [answerOpeningChoice, fetchNext, prefetchNext],
-  );
-
-  const openFreeText = useCallback(
-    (open: boolean) => dispatch({ type: "decision/typing", open }),
-    [],
-  );
-
-  const backToMenu = useCallback(() => dispatch({ type: "menu/new" }), []);
+      return;
+    }
+    void fetchNext();
+  }, [fetchNext, runSubmission, showError]);
 
   return {
-    state,
-    advance,
-    startNewGame,
-    submitSetup,
-    finishIntro,
-    chooseOption,
-    submitFreeText,
-    openFreeText,
-    backToMenu,
+    state, advance, startNewGame, submitSetup, finishIntro, retry,
+    chooseOption: (choiceId) => answer("choice", choiceId),
+    submitFreeText: (text) => {
+      if (text.trim()) answer("text", text.trim());
+      else dispatch({ type: "decision/typing", open: false });
+    },
+    openFreeText: (open) => dispatch({ type: "decision/typing", open }),
+    backToMenu: startNewGame,
   };
 }

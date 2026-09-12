@@ -200,6 +200,7 @@ class GameService:
                     queue_depth=session.queue_depth,
                 )
 
+            await self.generation.expire_pending(session)
             if session.queue_depth == 0:
                 # Order matters. A batch in flight is checked BEFORE awaiting_player:
                 # right after the player answers a decision point the head of the ledger
@@ -207,6 +208,14 @@ class GameService:
                 # would re-offer the choice they just made. Whether that is visible
                 # depends only on how long generation takes -- which is precisely the
                 # thing that is fast offline and slow with a real model.
+                if (self.narrative.web_mode and session.pending
+                    and session.pending.status is BatchStatus.failed):
+                    self._kicked.discard(game_id)
+                    return NextStepOut(
+                        status="failed", batch_id=session.pending.batch_id,
+                        error=session.pending.error or "Story generation failed. Please try again.",
+                    )
+
                 if session.pending and session.pending.status in (
                     BatchStatus.queued,
                     BatchStatus.running,
@@ -220,13 +229,13 @@ class GameService:
                         retry_after_ms=700,
                     )
 
-                if session.awaiting_player:
+                if self._awaiting_player(session):
                     # Reached with no batch in flight, which also covers a failed batch:
                     # re-offering the decision point is the right recovery (PRD §26).
                     self._kicked.discard(game_id)
                     return NextStepOut(
                         status="awaiting_player",
-                        step=session.current_step,
+                        step=self._decision_step(session),
                         queue_depth=0,
                     )
 
@@ -248,21 +257,29 @@ class GameService:
             await self.games.save(session)
             return NextStepOut(status="ready", step=step, queue_depth=session.queue_depth)
 
-    async def next_batch(self, game_id: str, limit: int = 20, wait_ms: int = 0) -> StepsBatchOut:
+    async def next_batch(self, game_id: str, limit: int = 20, wait_ms: int = 0, after_index: int | None = None) -> StepsBatchOut:
         """Deliver up to *limit* steps at once, optionally waiting briefly for steps to appear."""
         deadline = time.monotonic() + min(max(0, wait_ms), self.max_wait_ms) / 1000.0
 
         while True:
-            outcome = await self._try_deliver_batch(game_id, limit)
+            outcome = await self._try_deliver_batch(game_id, limit, after_index=after_index)
             if outcome.status != "pending" or time.monotonic() >= deadline:
                 return outcome
             await asyncio.sleep(POLL_INTERVAL_S)
 
-    async def _try_deliver_batch(self, game_id: str, limit: int = 20) -> StepsBatchOut:
+    async def _try_deliver_batch(self, game_id: str, limit: int = 20, after_index: int | None = None) -> StepsBatchOut:
         async with self.generation.lock(game_id):
             session = await self.games.get(game_id)
             if session is None:
                 raise GameNotFound(game_id)
+
+            # A response can be lost after delivery committed. Replay it without applying
+            # relationships or memories twice, including the final batch of a story.
+            if self.narrative.web_mode and after_index is not None and after_index < session.cursor:
+                return StepsBatchOut(
+                    status="ready", steps=session.steps[after_index + 1:session.cursor + 1][:limit],
+                    queue_depth=session.queue_depth,
+                )
 
             if session.ended:
                 head = session.current_step
@@ -272,7 +289,16 @@ class GameService:
                     queue_depth=session.queue_depth,
                 )
 
+            await self.generation.expire_pending(session)
             if session.queue_depth == 0:
+                if (self.narrative.web_mode and session.pending
+                    and session.pending.status is BatchStatus.failed):
+                    self._kicked.discard(game_id)
+                    return StepsBatchOut(
+                        status="failed", batch_id=session.pending.batch_id,
+                        error=session.pending.error or "Story generation failed. Please try again.",
+                    )
+
                 if session.pending and session.pending.status in (
                     BatchStatus.queued,
                     BatchStatus.running,
@@ -285,9 +311,9 @@ class GameService:
                         retry_after_ms=700,
                     )
 
-                if session.awaiting_player:
+                if self._awaiting_player(session):
                     self._kicked.discard(game_id)
-                    head = session.current_step
+                    head = self._decision_step(session)
                     return StepsBatchOut(
                         status="awaiting_player",
                         steps=[head] if head else [],
@@ -312,10 +338,41 @@ class GameService:
                 step = session.steps[session.cursor]
                 await self._commit_step(session, step)
                 delivered.append(step)
+                if step.is_ending:
+                    break
 
             session.played()
             await self.games.save(session)
             return StepsBatchOut(status="ready", steps=delivered, queue_depth=session.queue_depth)
+
+    def _decision_step(self, session: GameSession) -> StoryStep | None:
+        if not self.narrative.web_mode:
+            return session.current_step
+        return next((step for step in reversed(session.steps[:session.cursor + 1])
+                     if step.is_blocking), None)
+
+    def _awaiting_player(self, session: GameSession) -> bool:
+        if not self.narrative.web_mode:
+            return session.awaiting_player
+        step = self._decision_step(session)
+        if step is None:
+            return False
+        decision = session.pending.decision if session.pending else None
+        return not decision or decision.step_id != step.step_id
+
+    async def retry_generation(self, game_id: str) -> BatchState | None:
+        session = await self.get(game_id)
+        if not self.narrative.web_mode or session.ended:
+            raise InvalidAction("generation retry is only available for an active web story")
+        pending = session.pending
+        if pending and pending.status in (BatchStatus.queued, BatchStatus.running, BatchStatus.ready):
+            return pending
+        if not pending or not pending.intent or not pending.decision:
+            raise InvalidAction("there is no failed story turn to retry")
+        return await self.generation.submit(
+            game_id, pending.intent, decision=pending.decision,
+            refine_input=pending.refine_input,
+        )
 
     def _kick(self, game_id: str) -> None:
         """Self-heal a dry queue by submitting a low-key continuation.
@@ -454,19 +511,18 @@ class GameService:
     # -- player input --------------------------------------------------------------------
 
     async def submit_action(
-        self, game_id: str, text: str, step_id: str | None = None
+        self, game_id: str, text: str, step_id: str | None = None, request_id: str | None = None
     ) -> tuple[BatchState | None, PlayerIntent]:
         session = await self.get(game_id)
+        if (request_id and session.pending and session.pending.request_id == request_id
+            and session.pending.intent):
+            return session.pending, session.pending.intent
         if session.ended:
             raise InvalidAction("this game has ended")
 
-        # Stamped before parsing, not after: parsing can be a multi-second model call,
-        # and a player returning after eight days would otherwise sit in that window with
-        # a save the collector still considers abandoned.
+        # Protect a returning player's save from collection before queue submission.
         async with self.generation.lock(game_id):
-            current = await self.games.get(game_id)
-            if current is None:
-                raise GameNotFound(game_id)
+            current = await self.get(game_id)
             current.played()
             await self.games.save(current)
 
@@ -478,6 +534,8 @@ class GameService:
         intent, refinable = self.director.parse_fast(session, text)
 
         step = session.step_by_id(step_id) if step_id else None
+        if step_id and step is None:
+            raise InvalidAction(f"unknown step {step_id}")
         if step is not None:
             if not step.is_blocking:
                 raise InvalidAction(f"step {step_id} is not a decision point")
@@ -515,39 +573,23 @@ class GameService:
             used_free_text_when_offered_choices=bool(head and head.is_blocking and head.next_choices),
         )
 
-        async with self.generation.lock(game_id):
-            current = await self.games.get(game_id)
-            if current is None:
-                # Deleted underneath this request. Answering 202 with a null batch id
-                # would tell the player their line was accepted, and the next poll would
-                # 404 anyway.
-                raise GameNotFound(game_id)
-            if not (
-                current.pending
-                and current.pending.status in (BatchStatus.queued, BatchStatus.running)
-            ):
-                current.history.append(f'{current.player.name} typed: "{text.strip()[:160]}"')
-                current.played()
-                if not refinable:
-                    # With no model to refine it, the keyword intent is the final one. When
-                    # there is one, the worker records the style instead, from the refined
-                    # intent -- PlayerStyle.targets is what picks the ending (agents/ending.py),
-                    # so grading typed input on the keyword parse would quietly change who the
-                    # player ends up with.
-                    current.style.record(
-                        kind=decision.kind, risk=intent.risk.value, target=intent.target
-                    )
-                await self.games.save(current)
-
         batch = await self.generation.submit(
-            game_id, intent, decision=decision, refine_input=text if refinable else None
+            game_id, intent, decision=decision, refine_input=text if refinable else None,
+            request_id=request_id,
+            history_entry=f'{session.player.name} typed: "{text.strip()[:160]}"',
+            record_style=not refinable,
         )
+        if batch is None:
+            await self.get(game_id)  # A save deleted during submission must answer 404.
         return batch, intent
 
     async def submit_choice(
-        self, game_id: str, step_id: str, choice_id: str
+        self, game_id: str, step_id: str, choice_id: str, request_id: str | None = None
     ) -> tuple[BatchState | None, PlayerIntent]:
         session = await self.get(game_id)
+        if (request_id and session.pending and session.pending.request_id == request_id
+            and session.pending.intent):
+            return session.pending, session.pending.intent
         if session.ended:
             raise InvalidAction("this game has ended")
 
@@ -590,24 +632,14 @@ class GameService:
             rejected=[c.text for c in step.next_choices if c.id != choice_id],
         )
 
-        async with self.generation.lock(game_id):
-            current = await self.games.get(game_id)
-            if current is None:
-                raise GameNotFound(game_id)
-            if not (
-                current.pending
-                and current.pending.status in (BatchStatus.queued, BatchStatus.running)
-            ):
-                current.history.append(f'{current.player.name} chose: "{choice.text}"')
-                current.played()
-                current.style.record(kind=decision.kind, risk=intent.risk.value, target=intent.target)
-                await self.games.save(current)
-
         batch = await self.generation.submit(
             game_id,
             intent,
             decision=decision,
             speculative_key=f"{game_id}:{step_id}:{choice_id}",
+            request_id=request_id,
+            history_entry=f'{session.player.name} chose: "{choice.text}"',
+            record_style=True,
         )
         return batch, intent
 

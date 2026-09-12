@@ -515,12 +515,15 @@ class DirectorAgent:
             ):
                 return character.id
 
-        present = [c for c in self.world.character_ids if c in session.world.present_characters]
+        recent = session.response_context_steps(12)
+        question = recent[-1] if recent and recent[-1].is_blocking else None
+        present_ids = question.characters if question and question.characters else session.world.present_characters
+        present = [c for c in self.world.character_ids if c in present_ids]
 
         # No name given. "I say sorry" almost always means sorry to whoever you were
         # just talking to -- picking someone else because they happen to be in the room
         # reads as the game losing the thread.
-        for step in reversed(session.steps[-12:]):
+        for step in reversed(recent):
             speaker = step.dialogue.speaker if step.dialogue else None
             if speaker and speaker in present:
                 return speaker

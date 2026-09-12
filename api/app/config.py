@@ -21,7 +21,8 @@ class Settings(BaseSettings):
 
     #: Deployment mode. When ``True`` the API only serves images already in the asset
     #: store (MinIO / local filesystem) and never generates new ones at runtime.
-    #: Story text generation continues normally. Use this for web deployments where
+    #: Story text tries alternate AI models and reports retryable errors on exhaustion.
+    #: Use this for web deployments where
     #: GPU resources are unavailable or image generation costs should be avoided.
     WEB_MODE: bool = False
 
@@ -57,6 +58,9 @@ class Settings(BaseSettings):
     # Must support structured outputs. Verify at:
     #   https://openrouter.ai/models?supported_parameters=structured_outputs
     OPENROUTER_MODEL: str = "google/gemini-3.7-flash"
+    # Ordered alternate story models, used only in WEB_MODE. Each must support JSON schema.
+    OPENROUTER_FALLBACK_MODELS: str = "openai/gpt-4.1-mini"
+    WEB_AI_ATTEMPT_TIMEOUT_S: float = 45.0
     # Verify at: https://openrouter.ai/models?output_modalities=image
     OPENROUTER_IMAGE_MODEL: str = "google/gemini-3.1-flash-image"
     # Keeps the request off provider endpoints that would ignore response_format.

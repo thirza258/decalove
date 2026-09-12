@@ -18,6 +18,7 @@ import type {
 
 export class DecaloveAPI {
   lastError: string | null = null;
+  lastStatus: number | null = null;
 
   private readonly base: string;
   private readonly prefix: string;
@@ -81,6 +82,7 @@ export class DecaloveAPI {
         headers: payload !== undefined ? { "content-type": "application/json" } : undefined,
         body: payload !== undefined ? JSON.stringify(payload) : undefined,
       });
+      this.lastStatus = response.status;
       if (!response.ok) {
         this.lastError = `${response.status} ${response.statusText}`;
         return null;
@@ -88,6 +90,7 @@ export class DecaloveAPI {
       this.lastError = null;
       return response.status === 204 ? (null as T) : ((await response.json()) as T);
     } catch (error) {
+      this.lastStatus = null;
       this.lastError =
         error instanceof DOMException && error.name === "AbortError"
           ? `no response within ${(timeout / 1000).toFixed(0)}s`
@@ -110,13 +113,17 @@ export class DecaloveAPI {
     return this.call<GameStateOut>(`/games/${gameId}`);
   }
 
+  retryGeneration(gameId: string) {
+    return this.call<AcceptedOut>(`/games/${gameId}/generation/retry`, { method: "POST" });
+  }
+
   /**
    * A whole batch at once, so the beats after the first play with no network at all.
    * This is what makes clicking feel instant.
    */
-  stepsBatch(gameId: string, limit: number, waitMs: number) {
+  stepsBatch(gameId: string, limit: number, waitMs: number, afterIndex?: number) {
     return this.call<StepsBatchOut>(`/games/${gameId}/steps/batch`, {
-      params: { limit, wait_ms: waitMs },
+      params: { limit, wait_ms: waitMs, ...(afterIndex === undefined ? {} : { after_index: afterIndex }) },
       waitMs,
     });
   }
@@ -129,17 +136,17 @@ export class DecaloveAPI {
     });
   }
 
-  submitChoice(gameId: string, stepId: string, choiceId: string) {
+  submitChoice(gameId: string, stepId: string, choiceId: string, requestId?: string) {
     return this.call<AcceptedOut>(`/games/${gameId}/choices`, {
       method: "POST",
-      payload: { step_id: stepId, choice_id: choiceId },
+      payload: { step_id: stepId, choice_id: choiceId, request_id: requestId },
     });
   }
 
-  submitAction(gameId: string, input: string, stepId?: string | null) {
+  submitAction(gameId: string, input: string, stepId?: string | null, requestId?: string) {
     return this.call<AcceptedOut>(`/games/${gameId}/actions`, {
       method: "POST",
-      payload: { input, step_id: stepId },
+      payload: { input, step_id: stepId, request_id: requestId },
     });
   }
 

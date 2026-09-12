@@ -22,6 +22,7 @@ class NewGameRequest(BaseModel):
 
 
 class ActionRequest(BaseModel):
+    request_id: str | None = Field(default=None, max_length=100)
     model_config = ConfigDict(extra="ignore")
 
     input: str = Field(min_length=1, max_length=600)
@@ -35,6 +36,7 @@ class SkipRequest(BaseModel):
 
 
 class ChoiceRequest(BaseModel):
+    request_id: str | None = Field(default=None, max_length=100)
     model_config = ConfigDict(extra="ignore")
 
     step_id: str
@@ -81,7 +83,9 @@ class NextStepOut(BaseModel):
     client answers it with an in-world ambient line, never a spinner (PRD §11).
     """
 
-    status: Literal["ready", "pending", "awaiting_player", "ended"]
+    status: Literal["ready", "pending", "awaiting_player", "ended", "failed"]
+    error: str | None = None
+    batch_id: str | None = None
     step: StoryStep | None = None
     queue_depth: int = 0
     retry_after_ms: int = 700
@@ -91,7 +95,9 @@ class NextStepOut(BaseModel):
 class StepsBatchOut(BaseModel):
     """Batch of steps delivered at once so the Ren'Py client can loop locally without per-click requests."""
 
-    status: Literal["ready", "pending", "awaiting_player", "ended"]
+    status: Literal["ready", "pending", "awaiting_player", "ended", "failed"]
+    error: str | None = None
+    batch_id: str | None = None
     steps: list[StoryStep] = Field(default_factory=list)
     queue_depth: int = 0
     retry_after_ms: int = 700

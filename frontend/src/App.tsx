@@ -13,6 +13,7 @@ import { FreeTextInput } from "./components/FreeTextInput";
 import { LandingPage } from "./components/LandingPage";
 import {
   EndingOverlay,
+  GenerationErrorModal,
   ExpiredScreen,
   OfflineScreen,
   SetupScreen,
@@ -62,7 +63,7 @@ export default function App() {
   // the behaviour every visual novel has, and it is why the typewriter is lifted out
   // of the text box.
   const onStageClick = () => {
-    if (state.deciding || state.typing) return;
+    if (state.deciding || state.typing || state.error) return;
     if (!typed.done) {
       typed.complete();
       return;
@@ -137,7 +138,7 @@ export default function App() {
         />
       </div>
 
-      {state.deciding && !state.typing && state.current && (
+      {state.deciding && !state.typing && !state.busy && !state.error && state.current && (
         <ChoiceMenu
           choices={state.current.next_choices}
           onPick={game.chooseOption}
@@ -146,7 +147,7 @@ export default function App() {
         />
       )}
 
-      {state.typing && (
+      {state.typing && !state.busy && !state.error && (
         <FreeTextInput
           onSubmit={game.submitFreeText}
           onCancel={() => game.openFreeText(false)}
@@ -154,6 +155,9 @@ export default function App() {
       )}
 
       {state.phase === "ended" && <EndingOverlay onBack={game.backToMenu} />}
+      {state.error && (
+        <GenerationErrorModal message={state.error.message} onRetry={game.retry} onBack={game.backToMenu} />
+      )}
     </StageFrame>
   );
 }

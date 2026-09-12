@@ -11,7 +11,7 @@ from typing import Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.domain.direction import Directive, PlayerStyle
+from app.domain.direction import DecisionContext, Directive, PlayerStyle
 from app.domain.enums import RELATIONSHIP_AXES, BatchStatus
 from app.domain.intent import PlayerIntent
 from app.domain.story import RelationshipDelta, StoryStep
@@ -101,7 +101,7 @@ class PlayerProfile(BaseModel):
 
 
 class BatchState(BaseModel):
-    """One generation cycle — PRD §12. Surfaced to the client only as 'pending'."""
+    """One generation cycle, including the accepted turn needed for a web retry."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -113,6 +113,11 @@ class BatchState(BaseModel):
     used_fallback: bool = False
     created_at: datetime = Field(default_factory=_utcnow)
     finished_at: datetime | None = None
+    # Retain the accepted turn so retry never substitutes an automatic continuation.
+    intent: PlayerIntent | None = None
+    decision: DecisionContext | None = None
+    refine_input: str | None = None
+    request_id: str | None = None
 
 
 class GameSession(BaseModel):
@@ -183,6 +188,22 @@ class GameSession(BaseModel):
 
     def recent_steps(self, count: int) -> list[StoryStep]:
         return self.steps[max(0, len(self.steps) - count) :]
+
+    def response_context_steps(self, count: int) -> list[StoryStep]:
+        """Dialogue at the question being answered, excluding its continuation beats."""
+        pending = self.pending
+        decision = pending.decision if pending and pending.status in (
+            BatchStatus.queued, BatchStatus.running
+        ) else None
+        answered = self.step_by_id(decision.step_id) if decision and decision.step_id else None
+        if answered is None:
+            answered = next(
+                (step for step in reversed(self.steps[:self.cursor + 1]) if step.is_blocking),
+                None,
+            )
+        if answered is None:
+            return self.recent_steps(count)
+        return self.steps[max(0, answered.index - count + 1):answered.index + 1]
 
     def touch(self) -> None:
         """Any write. Called by the repository on every save."""

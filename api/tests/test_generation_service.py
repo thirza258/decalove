@@ -553,6 +553,7 @@ class TestSpeculationIsolation:
             session.id, INTENT, decision=TYPED, refine_input="I say hello"
         )
         assert batch is not None
+        await engine.generation.drain()
         assert len(calls) == 1
         # Dispatched by keyword: the task signature has grown twice now, and a positional
         # payload silently shifts every argument when it grows again.

@@ -69,9 +69,11 @@ export interface StoryStep {
   fallback?: boolean;
 }
 
-export type DeliveryStatus = "ready" | "pending" | "awaiting_player" | "ended";
+export type DeliveryStatus = "ready" | "pending" | "awaiting_player" | "ended" | "failed";
 
 export interface StepsBatchOut {
+  error?: string | null;
+  batch_id?: string | null;
   status: DeliveryStatus;
   steps: StoryStep[];
   queue_depth: number;
@@ -80,6 +82,8 @@ export interface StepsBatchOut {
 }
 
 export interface NextStepOut {
+  error?: string | null;
+  batch_id?: string | null;
   status: DeliveryStatus;
   step?: StoryStep | null;
   queue_depth: number;
@@ -120,6 +124,7 @@ export interface WorldOut {
 }
 
 export interface GameStateOut {
+  pending?: { batch_id: string; status: string; error?: string | null } | null;
   game_id: string;
   world_id: string;
   current_step_index: number;
@@ -145,4 +150,3 @@ export interface ActionRequest {
   input: string;
   step_id?: string | null;
 }
-

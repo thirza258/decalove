@@ -4,12 +4,13 @@ Narrative Agent — PRD §9.4 and the ten-step generation of §10.
 One call produces one *run*: a linear sequence of beats that stops the moment the player
 must decide again (docs/ARCHITECTURE.md §1.1). Everything it returns passes through the
 validator before the caller sees it, and if the model is unavailable, returns garbage, or
-returns something unrepairable, the scripted narrator takes over so the game keeps going
-(PRD §26).
+returns something unrepairable, alternate models are tried. Web mode reports exhaustion
+so the player can retry the same turn; other deployments keep the scripted fallback.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 
@@ -59,11 +60,17 @@ class NarrativeAgent:
         rating: str = "teen",
         min_choices: int = 3,
         max_choices: int = 5,
+        web_mode: bool = False,
+        fallback_chats: list[ChatProvider] | None = None,
+        attempt_timeout_s: float = 45.0,
     ) -> None:
         self.world = world
         self.validator = validator
         self.scripted = scripted
         self.chat = chat
+        self.web_mode = web_mode
+        self.fallback_chats = fallback_chats or []
+        self.attempt_timeout_s = attempt_timeout_s
         self.max_steps = max_steps
         self.temperature = temperature
         self.max_tokens = max_tokens
@@ -101,14 +108,18 @@ class NarrativeAgent:
         decision = decision or DecisionContext(kind=DecisionKind.free_text, typed=intent.raw)
         directive = directive or Directive(max_steps=self.max_steps)
 
-        if self.chat is not None:
+        providers = ([self.chat] if self.chat is not None else []) + self.fallback_chats
+        for index, provider in enumerate(providers):
             try:
-                run = await self._generate_with_llm(session, intent, memories, decision, directive)
-            except (LLMError, ValueError) as exc:
-                log.warning("narrative generation failed, falling back to scripted: %s", exc)
-            else:
+                work = self._generate_with_llm(
+                    session, intent, memories, decision, directive, provider=provider
+                )
+                run = (
+                    await asyncio.wait_for(work, timeout=self.attempt_timeout_s)
+                    if self.web_mode else await work
+                )
                 result = self._finish(
-                    run, session, used_fallback=False, provider=self.chat.name, directive=directive
+                    run, session, used_fallback=index > 0, provider=provider.name, directive=directive
                 )
                 if result.ok:
                     if result.report.violations:
@@ -118,6 +129,13 @@ class NarrativeAgent:
                     "generated run did not survive validation (%s), falling back",
                     result.report.summary(),
                 )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log.warning("narrative provider %s failed: %s", provider.name, exc)
+
+        if self.web_mode:
+            raise LLMError("All configured story AI models failed. Please try again.")
 
         run = (
             self.scripted.finale(session, directive)
@@ -141,9 +159,12 @@ class NarrativeAgent:
         memories: list[MemoryRecord],
         decision: DecisionContext,
         directive: Directive,
+        *,
+        provider: ChatProvider | None = None,
     ) -> GeneratedRun:
-        assert self.chat is not None
-        payload = await self.chat.complete_json(
+        provider = provider or self.chat
+        assert provider is not None
+        payload = await provider.complete_json(
             system=self._system,
             user=build_run_prompt(
                 self.world,
