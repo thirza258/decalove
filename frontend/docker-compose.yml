@@ -44,4 +44,6 @@ services:
       DECALOVE_PORT: "${DECALOVE_PORT:-80}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+      - ./public/images:/usr/share/nginx/html/images:ro
     restart: unless-stopped

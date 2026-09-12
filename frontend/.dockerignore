@@ -3,5 +3,4 @@ dist/
 .env
 .env.*
 !.env.example
-# Generated art is mounted or baked in separately, never through the build context.
-public/images/
+

@@ -211,6 +211,8 @@ services:
       DECALOVE_API_BASE: ""
       DECALOVE_API_PREFIX: /api/v1
       DECALOVE_API_UPSTREAM: http://api:8000
+    volumes:
+      - ../frontend/public/images:/usr/share/nginx/html/images:ro
     depends_on:
       api:
         condition: service_healthy

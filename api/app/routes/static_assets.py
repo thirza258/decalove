@@ -46,7 +46,7 @@ def _fetch_from_local(path: str) -> bytes | None:
         pass
     return None
 
-@router.get("/static/images/{path:path}")
+@router.api_route("/static/images/{path:path}", methods=["GET", "HEAD"])
 async def get_static_image(path: str):
     object_name = f"static/images/{path}"
     
