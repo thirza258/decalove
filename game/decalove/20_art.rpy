@@ -66,7 +66,10 @@ init -3 python:
             "images/bg/%s.png" % location_id,
             "images/bg/%s_morning.png" % location_id,
             "images/bg/%s_noon.png" % location_id,
+            "images/bg/%s_afternoon.png" % location_id,
             "images/bg/%s_sunset.png" % location_id,
+            "images/bg/%s_evening.png" % location_id,
+            "images/bg/%s_night.png" % location_id,
         ):
             if renpy.loadable(candidate):
                 art = Transform(Image(candidate), fit="cover", xysize=(config.screen_width, config.screen_height))
