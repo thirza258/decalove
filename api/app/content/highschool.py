@@ -246,6 +246,115 @@ LOCATIONS = (
     ),
 )
 
+CORE_LOCATIONS = LOCATIONS
+
+EXTRA_LOCATIONS: tuple[Location, ...] = (
+    Location(
+        id="internet_cafe",
+        place="internet cafe",
+        name="Manga & Net Cafe",
+        description="Private cubicles, soft hum of computer fans, shelves of manga, and endless iced tea.",
+        art="japanese manga internet cafe cubicle, glowing monitor, headphones, shelves of manga",
+        palette=("#4a3e72", "#18142b"),
+        times=("afternoon", "evening", "night"),
+        ambience=(
+            "The hum of computer fans fills the narrow corridor.",
+            "Ice clinks in a plastic soda cup down the hall.",
+        ),
+    ),
+    Location(
+        id="airport",
+        place="airport",
+        name="Regional Airport",
+        description="Soaring glass terminal, departure boards blinking departures, and planes taking off into the horizon.",
+        art="modern airport departure terminal, glass windows, airplanes on tarmac runway, sunset",
+        palette=("#7eb6d9", "#1b2c42"),
+        times=("morning", "afternoon", "sunset", "night"),
+        ambience=(
+            "A chime precedes a flight boarding announcement in three languages.",
+            "Far out on the runway, heat shimmers off the tarmac.",
+        ),
+    ),
+    Location(
+        id="cultural_event",
+        place="cultural festival",
+        name="Cultural Festival",
+        description="Handmade paper lanterns, classrooms transformed into cafes and haunted houses, festival banners everywhere.",
+        art="japanese school cultural festival, paper lanterns, carnival game stalls, banners",
+        palette=("#e87a5d", "#381a1f"),
+        times=("noon", "afternoon", "sunset", "evening"),
+        ambience=(
+            "Laughter echoes down the hallway between decorated classroom stalls.",
+            "The scent of buttered popcorn and crepe batter hangs in the air.",
+        ),
+    ),
+    Location(
+        id="outside_school",
+        place="outside the school",
+        name="Outside School",
+        description="Suburban sidewalk, utility poles, residential streets, and the quiet walk home.",
+        art="suburban residential street outside japanese school, sidewalk, utility poles, sunset",
+        palette=("#e0876a", "#292433"),
+        times=("morning", "afternoon", "sunset", "evening"),
+        ambience=(
+            "A crow calls from atop a utility pole.",
+            "A bicycle bell rings as a student peddles past.",
+        ),
+    ),
+    Location(
+        id="cafe",
+        place="cafe",
+        name="Corner Cafe",
+        description="Warm wood, the hiss of the espresso machine, soft acoustic music, and quiet booth seating.",
+        art="cozy aesthetic japanese coffee shop interior, wooden tables, warm sunlight, espresso machine",
+        palette=("#b87c4c", "#2b1c13"),
+        times=("morning", "afternoon", "sunset", "evening"),
+        ambience=(
+            "The espresso machine hisses as milk is steamed.",
+            "A slow acoustic guitar melody plays gently from overhead speakers.",
+        ),
+    ),
+    Location(
+        id="conbini",
+        place="convenience store",
+        name="Convenience Store",
+        description="Bright white lights, the chime when the automatic door slides open, rows of cold drinks and warm snacks.",
+        art="japanese convenience store interior, bright fluorescent lights, snack aisles, drinks refrigerators",
+        palette=("#52a382", "#13261f"),
+        times=("afternoon", "sunset", "evening", "night"),
+        ambience=(
+            "The familiar door chime chimes as someone steps inside.",
+            "The refrigerator compressor hums quietly in the back corner.",
+        ),
+    ),
+    Location(
+        id="night_market",
+        place="night market",
+        name="Festival Night Market",
+        description="Red paper lanterns stretching into the dusk, food stalls sizzling with yakisoba and takoyaki, festive energy.",
+        art="traditional japanese night street market festival, outdoor food stalls yatai, glowing red paper lanterns",
+        palette=("#f26444", "#301319"),
+        times=("sunset", "evening", "night"),
+        ambience=(
+            "The sizzle of batter on a hot griddle mixes with festival chatter.",
+            "Paper lanterns sway gently in the summer evening breeze.",
+        ),
+    ),
+    Location(
+        id="fireworks",
+        place="fireworks festival",
+        name="Fireworks Festival",
+        description="The riverbank crowded under the night sky, awaiting the thunder and light of summer fireworks.",
+        art="summer festival fireworks display in night sky over riverbank, colorful fireworks bursting in dark sky",
+        palette=("#d94183", "#12142e"),
+        times=("evening", "night"),
+        ambience=(
+            "A low rumble rolls across the water as a gold chrysanthemum burst blooms above.",
+            "Cheering and awe ripple through the crowd on the riverbank.",
+        ),
+    ),
+)
+
 HIGH_SCHOOL_ROMANCE = World(
     id="highschool_romance",
     title="Decalove: Second Year, Second Chances",

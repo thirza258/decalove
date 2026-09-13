@@ -96,55 +96,135 @@ NEGATIVE_PROMPT_CHAR = (
 # Image definitions — matched to game/images/ structure
 # ---------------------------------------------------------------------------
 BACKGROUNDS = {
-    # 1. Classroom (morning, noon, afternoon)
+    # 1. Classroom (morning, noon, afternoon, sunset, evening, night, rain)
     "classroom.png": "japanese high school classroom interior, wooden desks and chairs, chalkboard, large windows with sunlight streaming in, morning light, warm atmosphere",
     "classroom_morning.png": "japanese high school classroom interior, wooden desks and chairs, chalkboard, large windows with bright morning sunlight, golden hour morning light, dust motes in sunbeams",
     "classroom_noon.png": "japanese high school classroom interior, bright midday sun through large windows, empty desks, clean chalkboard, vivid colors",
     "classroom_afternoon.png": "japanese high school classroom interior, empty desks in rows, warm late afternoon sunlight, dust motes in golden sunbeams, peaceful quiet classroom",
+    "classroom_sunset.png": "japanese high school classroom interior at sunset, long golden amber shadows stretching across wooden desks, chalkboard glowing in orange sunset rays, melancholic twilight atmosphere",
+    "classroom_evening.png": "japanese high school classroom interior at evening dusk, deep blue sky outside large windows, soft warm classroom ceiling lights turned on, quiet empty classroom after school",
+    "classroom_night.png": "japanese high school classroom interior at night, dark starry night sky outside large windows, city lights glowing in distance, quiet shadows across wooden desks",
+    "classroom_rain.png": "japanese high school classroom interior on a rainy day, rain streaks on large windows, overcast soft cool blue ambient light, wet courtyard outside, quiet peaceful classroom",
 
-    # 2. Cafeteria (noon)
+    # 2. Cafeteria (morning, noon, afternoon, sunset, evening)
     "cafeteria.png": "japanese high school cafeteria interior, long wooden tables and benches, food trays, large windows, industrial ceiling, warm sunlight",
+    "cafeteria_morning.png": "japanese high school cafeteria interior in early morning, soft morning sunlight streaming across empty wooden tables, clean food counters, quiet serene start of day",
     "cafeteria_noon.png": "japanese high school cafeteria interior, long wooden tables and benches, food trays, large windows, bright noon sunlight, lively atmosphere",
+    "cafeteria_afternoon.png": "japanese high school cafeteria interior in late afternoon, quiet empty cafeteria, warm slanting sunlight across long tables and benches, serene atmosphere",
+    "cafeteria_sunset.png": "japanese high school cafeteria interior at sunset, orange and golden sunset glow reflecting on polished floor, empty long tables and vending machines",
+    "cafeteria_evening.png": "japanese high school cafeteria interior at evening, warm interior cafeteria lamps, dim outside windows, empty tables, peaceful quiet mood",
 
-    # 3. Library (noon, afternoon, evening)
+    # 3. Library (morning, noon, afternoon, sunset, evening, night, rain)
     "library.png": "japanese high school library interior, tall wooden bookshelves filled with books, reading tables with desk lamps, wooden floor, warm afternoon light through windows",
+    "library_morning.png": "japanese high school library interior in bright fresh morning sunlight, sunbeams streaming between tall wooden bookshelves, sparkling dust motes, quiet wooden study tables",
     "library_noon.png": "japanese high school library interior, tall wooden bookshelves filled with books, reading tables with desk lamps, wooden floor, afternoon sunlight streaming through windows",
     "library_afternoon.png": "japanese high school library interior, long shadows between tall wooden bookshelves, warm golden hour sunlight, quiet study carrels",
+    "library_sunset.png": "japanese high school library interior at golden sunset, warm amber sunlight illuminating tall bookshelves, long shadows between book aisles, cozy quiet reading atmosphere",
     "library_evening.png": "japanese high school library interior, tall wooden bookshelves, warm glowing reading desk lamps, dusk outside windows, quiet cozy atmosphere",
+    "library_night.png": "japanese high school library interior late at night, warm glowing brass desk lamps on wooden study tables, deep dark night outside tall windows, quiet peaceful solitude",
+    "library_rain.png": "japanese high school library interior on a rainy afternoon, raindrops on tall arched windows, cozy warm desk lamps, bookshelves, peaceful gentle sound of rain",
 
-    # 4. Rooftop (noon, afternoon, sunset, evening)
+    # 4. Rooftop (morning, noon, afternoon, sunset, evening, night, rain)
     "rooftop.png": "japanese high school rooftop, chain-link fence, metal door, pipes and ventilation, city skyline view, dramatic sunset sky, orange and purple clouds",
+    "rooftop_morning.png": "japanese high school rooftop at early sunrise, pale pastel pink and gold morning sky over city skyline, fresh dawn breeze, chain-link fence, empty metal benches",
     "rooftop_noon.png": "japanese high school rooftop, chain-link fence, panoramic city skyline view, clear blue midday sky with white fluffy clouds, bright sunlight",
     "rooftop_afternoon.png": "japanese high school rooftop, chain-link fence overlooking town, warm afternoon sunlight, wide sky with light clouds",
     "rooftop_sunset.png": "japanese high school rooftop, chain-link fence overlooking city skyline, dramatic sunset, golden hour, orange and purple sky, city lights beginning to glow",
     "rooftop_evening.png": "japanese high school rooftop, chain-link fence overlooking town skyline at twilight, deep blue and purple sky, glowing city lights in distance, serene mood",
+    "rooftop_night.png": "japanese high school rooftop under starry night sky, crescent moon, glittering city lights sprawling below, chain-link fence silhouette, quiet romantic atmosphere",
+    "rooftop_rain.png": "japanese high school rooftop in light rain, overcast cloudy sky, puddle reflections on concrete rooftop floor, rain droplets on chain-link fence, town skyline in mist",
 
-    # 5. School Gate (morning, noon, afternoon, sunset)
+    # 5. School Gate (morning, noon, afternoon, sunset, evening, night, rain)
     "school_gate.png": "japanese high school entrance front gate, iron gates, bicycle racks, cherry blossom trees, sidewalk, peaceful campus entrance",
     "school_gate_morning.png": "japanese high school front gate, bright fresh morning light, cherry blossom trees, bicycle parking racks, school building entrance",
     "school_gate_noon.png": "japanese high school front gate, bright midday sun, paved entrance road, cherry trees, open iron gate",
     "school_gate_afternoon.png": "japanese high school front gate, warm afternoon sunlight, cherry blossom trees along path, bicycle racks, gate open",
     "school_gate_sunset.png": "japanese high school front gate at golden sunset hour, long warm shadows, glowing orange sky, cherry trees, end of school day",
+    "school_gate_evening.png": "japanese high school entrance front gate at evening dusk, warm streetlamp glowing softly, deep indigo sky, silhouettes of cherry blossom trees, quiet empty street",
+    "school_gate_night.png": "japanese high school front gate at night, closed iron gates under warm streetlights, quiet residential street, starry night sky above school building",
+    "school_gate_rain.png": "japanese high school front gate in gentle rain, puddle reflections on asphalt, cherry blossom petals on wet ground, bicycle racks, umbrellas by gate",
 
-    # 6. Riverside Park (afternoon, sunset, evening)
+    # 6. Riverside Park (morning, noon, afternoon, sunset, evening, night, rain)
     "park.png": "riverside park, grassy bank sloping down to water, single wooden park bench, vending machine, peaceful afternoon scenery",
+    "park_morning.png": "riverside park in early morning mist, fresh morning sunlight reflecting on sparkling river, dew on green grassy bank, single wooden bench, peaceful quiet dawn",
+    "park_noon.png": "riverside park at bright noon, lush green grassy riverbank, clear blue sky with fluffy summer clouds, sparkling river water, single wooden bench, vending machine",
     "park_afternoon.png": "riverside park, green grassy riverbank, single bench, vending machine, bright afternoon sun reflecting on sparkling river water",
     "park_sunset.png": "riverside park at sunset, grassy slope down to river, single bench, softly glowing vending machine, golden orange reflection on water surface",
     "park_evening.png": "riverside park at evening twilight, dusk sky, single bench beside river, warm streetlight glow, quiet tranquil riverside",
+    "park_night.png": "riverside park at night, full moon reflecting on calm river water, starry sky, warm glow from vending machine, lone wooden bench, peaceful serene night scenery",
+    "park_rain.png": "riverside park in gentle rain, raindrops rippling on river surface, glistening wet grass on bank, lone wooden bench under cloudy grey sky",
 
-    # 7. Train Station (afternoon, sunset, evening, night)
+    # 7. Train Station (morning, noon, afternoon, sunset, evening, night, rain)
     "train_station.png": "small japanese train station platform, departure schedule board, empty wooden benches, railway tracks, suburban station",
+    "train_station_morning.png": "small suburban japanese train station platform in crisp morning sunlight, clear blue sky, overhead canopy, empty wooden benches, polished railway tracks",
+    "train_station_noon.png": "suburban japanese train station platform at bright midday, strong summer sun casting sharp shadows under canopy, empty benches, sun-baked tracks stretching into distance",
     "train_station_afternoon.png": "small suburban train station platform, warm afternoon sunlight, overhead canopy, empty wooden benches, railway tracks",
     "train_station_sunset.png": "small japanese train station platform at sunset, glowing departure board, dramatic orange and purple sunset sky over tracks",
     "train_station_evening.png": "suburban japanese train platform at twilight, glowing station platform lamps, departure board illuminated, dusk sky",
     "train_station_night.png": "quiet japanese train station platform at night, overhead fluorescent lights glowing, empty platform, dark clear night sky",
+    "train_station_rain.png": "japanese train station platform in gentle rain, wet platform reflecting overhead lights, raindrops falling from canopy edge, railway tracks glistening in rain",
 
-    # 8. Player's Bedroom (morning, afternoon, evening, night)
+    # 8. Player's Bedroom (morning, noon, afternoon, sunset, evening, night, rain)
     "player_home.png": "cozy japanese teenager bedroom, wooden study desk, bookshelf, unmade bed, window, warm interior lighting",
     "player_home_morning.png": "cozy teenager bedroom interior, bright morning sunlight streaming through curtains onto wooden desk and unmade bed",
+    "player_home_noon.png": "cozy teenager bedroom interior at bright midday, bright sun streaming through curtains onto wooden study desk, bookshelf, unmade bed, clear warm day",
     "player_home_afternoon.png": "cozy teenager bedroom interior, afternoon sunlight through window, study desk with lamp, books on shelves",
+    "player_home_sunset.png": "cozy teenager bedroom interior at golden sunset, warm orange light washing across wooden desk and bookshelf, soft sunset glow on bed, serene quiet evening",
     "player_home_evening.png": "cozy bedroom interior at twilight, warm desk lamp glowing, quiet evening room atmosphere, dusk through window",
     "player_home_night.png": "cozy bedroom interior at night, warm yellow bedside lamp light, dark starry night sky outside window, quiet peaceful room",
+    "player_home_rain.png": "cozy teenager bedroom on a rainy afternoon, rain droplets sliding down windowpane, soft overcast dim light, warm desk lamp glowing, peaceful calm room",
+
+    # 9. School Corridor / Hallway
+    "corridor.png": "japanese high school hallway corridor, wooden floor, lockers, rows of sliding classroom doors with glass windows, warm sunlight streaming through corridor windows",
+    "corridor_afternoon.png": "japanese high school corridor hallway in warm late afternoon light, long shadows on polished wooden floor, empty lockers, sliding classroom doors",
+    "corridor_sunset.png": "japanese high school hallway at sunset, intense golden-orange sunlight illuminating wooden corridor, silhouettes of window frames, nostalgic peaceful atmosphere",
+    "corridor_evening.png": "japanese high school corridor hallway at evening dusk, fluorescent ceiling lights glowing, deep blue sky through windows, quiet empty school after hours",
+
+    # 10. Art Club Room (Ren's Club)
+    "art_room.png": "japanese high school art club room interior, wooden easels with canvases, paint jars and brushes on tables, sculptures on shelves, bright afternoon sunlight through tall windows",
+    "art_room_sunset.png": "japanese high school art club room at sunset, golden amber light shining on unfinished painting on wooden easel, messy paintbrushes, quiet romantic artistic mood",
+    "art_room_evening.png": "japanese high school art club room at twilight, warm desk lamps illuminating sketchbooks and canvases, quiet dusk sky outside windows",
+
+    # 11. School Courtyard & Athletic Track (Mika's Track Practice)
+    "courtyard.png": "japanese high school courtyard and athletic running track, green grass, chalk line markings on red dirt track, school building in background, clear blue sky",
+    "courtyard_sunset.png": "japanese high school athletic running track at sunset, glowing golden hour sky, empty sports field, long shadows across red clay track, quiet end of club practice",
+
+    # 12. Internet Cafe / Manga Cafe
+    "internet_cafe.png": "japanese manga internet cafe private cubicle interior, glowing computer monitor on wooden desk, padded reclining chair, keyboard, headphones, drinks cup, shelves of manga comic books in background, warm dim cozy ambient lighting",
+    "internet_cafe_night.png": "japanese internet cafe booth cubicle at late night, glowing computer screen illuminating cozy private booth, neon beverage dispenser in corridor, quiet cozy night atmosphere",
+
+    # 13. Airport
+    "airport.png": "modern airport departure terminal, massive floor-to-ceiling glass windows overlooking passenger airplanes on tarmac runway, flight departure information board, rows of terminal seats, bright architectural sunlight",
+    "airport_sunset.png": "modern airport terminal departure gate at golden sunset, dramatic amber sunset sky over airport tarmac runway and airplanes outside large glass windows, quiet departure lounge",
+    "airport_night.png": "international airport terminal at night, runway lights glowing outside large glass observation windows, reflective polished floor, illuminated flight board, quiet late night travel mood",
+
+    # 14. Cultural Event / School Festival
+    "cultural_event.png": "japanese high school cultural festival bunkasai, decorated school hallway and classroom, colorful hand-drawn banners, paper lanterns, carnival game stalls, lively festive celebratory atmosphere",
+    "cultural_event_sunset.png": "japanese school cultural festival at sunset, paper lanterns glowing in amber sunset light, decorated festival booths, streamers hanging from ceiling, nostalgic end of festival day",
+    "cultural_event_night.png": "school cultural festival at evening night, string fairy lights glowing across school courtyard, decorated food stalls, paper lanterns, lively twilight celebration",
+
+    # 15. Outside School
+    "outside_school.png": "outside japanese high school, suburban residential street, concrete sidewalk, utility poles with power lines, pedestrian crosswalk, cherry trees, sunny afternoon",
+    "outside_school_sunset.png": "suburban street outside japanese high school at golden sunset, long dramatic shadows stretching across asphalt, warm glowing sunset sky over houses, peaceful walk home",
+    "outside_school_rain.png": "street outside japanese high school on a rainy day, glistening wet asphalt reflecting traffic lights, rain puddles on sidewalk, utility poles, overcast mood",
+
+    # 16. Cafe / Coffee Shop
+    "cafe.png": "cozy aesthetic japanese coffee shop interior, wooden tables and comfortable chairs, espresso machine on wooden counter, chalkboard menu, pastry display case, warm sunlight through glass window",
+    "cafe_afternoon.png": "cozy cafe interior in warm afternoon light, wooden tables, potted plants, steaming cup of coffee on table, soft warm lighting, peaceful quiet ambiance",
+    "cafe_evening.png": "charming coffee shop cafe at evening dusk, warm hanging pendant lights glowing, cozy wooden booth seating, twilight outside window, quiet romantic atmosphere",
+
+    # 17. Conbini / Convenience Store
+    "conbini.png": "japanese 24 hour convenience store interior, bright fluorescent ceiling lighting, neat shelves stocked with snacks, instant ramen, drinks refrigerators, bento display, clean polished floor",
+    "conbini_night.png": "japanese convenience store exterior at night, glowing neon store sign illuminating sidewalk, glass front showing brightly lit interior, quiet suburban street, lonely nostalgic night vibe",
+    "conbini_interior_night.png": "inside japanese convenience store at late night, quiet aisles stocked with drinks and snacks, glowing refrigerator cases, warm bakery display counter, empty checkout counter",
+
+    # 18. Night Market / Festival Food Stalls
+    "night_market.png": "traditional japanese night street market festival, outdoor food stalls yatai with glowing red paper lanterns, steam rising from takoyaki and yakisoba grills, festive banners, twilight evening sky",
+    "night_market_night.png": "lively night market at summer festival, warm red and yellow paper lanterns glowing brightly along bustling street, decorative festival stalls, vibrant colorful festive night atmosphere",
+
+    # 19. Fireworks Events
+    "fireworks.png": "summer festival fireworks display in night sky over riverbank, spectacular colorful fireworks bursting in dark sky, glowing reflections on river water surface, festival lanterns and stall silhouettes",
+    "fireworks_rooftop.png": "spectacular colorful summer fireworks exploding in night sky viewed from school rooftop, city skyline lights below, colorful firework sparkles reflecting on chain-link fence, breathtaking romantic scene",
 }
 
 # Character descriptions derived from the actual game sprites
@@ -290,7 +370,11 @@ def generate_backgrounds(pipe, filter_location=None, limit=0, steps=DEFAULT_STEP
     
     items = list(BACKGROUNDS.items())
     if filter_location:
-        items = [(k, v) for k, v in items if k.startswith(filter_location)]
+        prefixes = tuple(p.strip() for p in filter_location.split(",") if p.strip())
+        items = [
+            (k, v) for k, v in items
+            if any(k == p or k.startswith(f"{p}.") or k.startswith(f"{p}_") for p in prefixes)
+        ]
 
     generated_count = 0
     total = len(items)
