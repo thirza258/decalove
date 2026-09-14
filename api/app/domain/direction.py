@@ -176,6 +176,10 @@ class Directive(BaseModel):
     allow_failure: bool = False
     push_location: str | None = None
     arc_note: str = ""
+    chapter_title: str = ""
+    chapter_question: str = ""
+    chapter_pressure: str = ""
+    chapter_progress: str = ""
     style_note: str = ""
     max_steps: int = 20
     #: Set only by ``DirectorAgent.plan`` once the playthrough has earned an ending. It is
@@ -214,6 +218,15 @@ class Directive(BaseModel):
             )
         if self.arc_note:
             lines.append(f"Arc: {self.arc_note}")
+        if self.chapter_title:
+            lines.extend([
+                f"Chapter: {self.chapter_title}",
+                f"Dramatic question: {self.chapter_question}",
+                f"Pressure: {self.chapter_pressure}",
+                f"Develop now: {self.chapter_progress}",
+                "This is a scene brief, not completed history. Follow the player's subject; "
+                "carry forward established consequences and leave room for refusal.",
+            ])
         if self.style_note:
             lines.append(f"Player: {self.style_note}")
         return "\n    ".join(lines)
@@ -227,8 +240,10 @@ class Directive(BaseModel):
             "Close it. No cliffhanger, no new complication, and do NOT offer the player "
             "another decision -- the engine will not present one.",
             "Land it on a concrete image rather than a summary of how everyone feels.",
-            "You may describe what the player does here: there is no next choice for it "
-            "to pre-empt.",
+            "You may describe the player's actions that follow from choices already made. "
+            "Do not invent a new commitment or confession to finish the scene.",
+            "Return to a specific delivered detail or memory if there is one. Honour "
+            "what actually happened, including declined invitations and unfinished promises.",
         ]
         for stance in self.stances:
             lines.append(f"- {stance.render()}")

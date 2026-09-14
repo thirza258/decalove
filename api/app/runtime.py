@@ -286,7 +286,8 @@ async def build_runtime(settings: Settings) -> Runtime:
     )
     scripted = ScriptedNarrator(world)
     director = DirectorAgent(
-        world, chat=chat, safety=safety, ending_min_steps=settings.ENDING_MIN_STEPS
+        world, chat=chat, safety=safety, ending_min_steps=settings.ENDING_MIN_STEPS,
+        steps_per_arc=settings.STEPS_PER_ARC,
     )
     narrative = NarrativeAgent(
         world,

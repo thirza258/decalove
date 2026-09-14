@@ -73,6 +73,20 @@ class Location:
 
 
 @dataclass(frozen=True)
+class Chapter:
+    """Authored dramatic direction, never evidence that an event already happened."""
+
+    id: str
+    title: str
+    question: str
+    pressure: str
+    progression: tuple[str, ...]
+    details: tuple[str, ...] = ()
+    lines: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    choices: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class World:
     id: str
     title: str
@@ -90,6 +104,11 @@ class World:
     wardrobe: str = ""
     #: Content boundaries handed to every generation call (PRD §28).
     safety: tuple[str, ...] = ()
+    story_premise: str = ""
+    chapters: tuple[Chapter, ...] = ()
+
+    def chapter(self, arc: str) -> Chapter | None:
+        return next((chapter for chapter in self.chapters if chapter.id == arc), None)
 
     def character(self, character_id: str) -> Character | None:
         return next((c for c in self.characters if c.id == character_id), None)

@@ -157,12 +157,16 @@ class GameService:
 
             target = min(until_index, len(session.steps) - 1)
             if target > session.cursor:
+                skipped = []
                 for idx in range(session.cursor + 1, target + 1):
                     step = session.steps[idx]
                     await self._commit_step(session, step)
+                    skipped.append(step)
                 session.cursor = target
                 session.played()
                 await self.games.save(session)
+                for step in skipped:
+                    await self._remember_step(session, step)
             return session
 
     # -- playback ------------------------------------------------------------------------
@@ -255,6 +259,7 @@ class GameService:
             await self._commit_step(session, step)
             session.played()
             await self.games.save(session)
+            await self._remember_step(session, step)
             return NextStepOut(status="ready", step=step, queue_depth=session.queue_depth)
 
     async def next_batch(self, game_id: str, limit: int = 20, wait_ms: int = 0, after_index: int | None = None) -> StepsBatchOut:
@@ -343,6 +348,8 @@ class GameService:
 
             session.played()
             await self.games.save(session)
+            for step in delivered:
+                await self._remember_step(session, step)
             return StepsBatchOut(status="ready", steps=delivered, queue_depth=session.queue_depth)
 
     def _decision_step(self, session: GameSession) -> StoryStep | None:
@@ -437,6 +444,12 @@ class GameService:
                 "game %s ended (%s)", session.id, session.world.flags.get("ending", "unknown")
             )
 
+    async def _remember_step(self, session: GameSession, step: StoryStep) -> None:
+        """Index only after the delivery cursor and its state have been saved.
+
+        A failed session save must not leave a character remembering an event the
+        player never received. The ledger is authoritative; this is a secondary index.
+        """
         if step.memory:
             impact = {
                 axis: value
@@ -447,9 +460,17 @@ class GameService:
                 )
                 if value
             }
-            await self.memory.remember(
-                session.id, step.memory, step_index=step.index, impact=impact
-            )
+            try:
+                await asyncio.wait_for(self.memory.remember(
+                    session.id, step.memory, step_index=step.index, impact=impact,
+                ), timeout=2.0)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # The proposal remains in the saved step ledger. A failed secondary
+                # memory index must not withhold the beat or its relationship changes.
+                log.warning("memory indexing failed for %s at step %s", session.id, step.index,
+                            exc_info=True)
 
     def _advance_clock(self, session: GameSession, location_id: str) -> None:
         """Move time forward on a scene change, snapping to a time the place supports.

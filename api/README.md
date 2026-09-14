@@ -98,7 +98,7 @@ app/
                 maintenance (garbage collection of abandoned saves)
   routes/       HTTP
   runtime.py    composition root - probes every dependency at startup
-tests/          425 tests; integration suites skip themselves without Docker
+tests/          offline regression tests; infrastructure suites skip when unavailable
 ```
 
 ## Tests

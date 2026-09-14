@@ -19,10 +19,7 @@ MAX_RENDERED_FLAGS = 24
 
 _RULES = """HARD RULES (violating any of these invalidates the whole response)
 
-1. PLAYER AGENCY. Never narrate a decision, speech, or deliberate action by the player.
-   You may describe what happens *to* them and what others do in front of them.
-   Bad:  "You kiss Aiko."   /   "You agree, and tell her you'll be there."
-   Good: "Aiko moves closer, waiting to see what you will do."
+1. PLAYER AGENCY. {agency_rule}
    Never write dialogue with speaker "player".
 
 2. CHARACTER CONSISTENCY. Behaviour must follow the cast sheet and the character's
@@ -43,14 +40,8 @@ _RULES = """HARD RULES (violating any of these invalidates the whole response)
 OUTPUT CONTRACT
 
 * Return exactly {max_steps} steps.
-* Place exactly ONE decision point (a step of type "choice" with {min_choices}-{max_choices}
-  options, or type "prompt") between step 10 and step 15 of this batch (i.e. at the 10th
-  to 15th step of the {max_steps} steps).
-* Steps before the choice develop the reaction to the previous player action and build the scene.
-* The choice step offers the player meaningful options for where to take the story next.
-* Steps after the choice step (e.g. steps 16 to {max_steps}) MUST be narration and dialogue
-  that naturally continue the immediate scene forward while the next run generates in the background.
-* No other step in the run before step 10 or after step 15 may be "choice" or "prompt".
+{decision_contract}
+* When a choice is requested, provide {min_choices}-{max_choices} distinct options.
 * Choice option text is what the PLAYER would say or do - written in their voice, short,
   and genuinely different from one another in intent, not in wording. Fewer than
   {min_choices} real options is worse than none: if you cannot find {min_choices}
@@ -62,9 +53,48 @@ OUTPUT CONTRACT
   week later. importance 0.0-1.0.
 * narration is prose, 1-3 sentences, present tense, close third person about the world.
 * Write rich, characterful dialogue and evocative text that drives the story forward.
+* The summary records only events that actually occur BEFORE the unanswered decision.
+  Never turn an offered option, intention, or future plan into an accomplished fact.
+
+SCENE CRAFT
+
+* Answer the player's actual words in the first few beats. Show a specific reaction or
+  consequence before introducing another problem. A refusal still changes the conversation.
+* Give the scene a concrete want, an obstacle, and a small turn. Use the chapter brief
+  as pressure on this conversation, not permission to ignore the player's chosen subject.
+* Reveal character through conflicting wants, habits, and subtext. Preserve each voice;
+  do not make everyone equally poetic, agreeable, or instantly vulnerable.
+* Reuse an established detail or unresolved promise when relevant. Develop it, rather
+  than repeating the last exchange. Never invent a past encounter to manufacture a callback.
+* Offer choices with different costs: approach, question, set a boundary, or leave room.
+  Do not reward every response with affection. Avoid filler about shifting light and
+  comfortable silence; each beat must add information, pressure, or a change of perspective.
 
 CONTENT BOUNDARIES ({rating})
 {safety}"""
+
+
+def decision_contract(max_steps: int, *, finale: bool = False) -> str:
+    """Keep the system and turn instructions compatible, including short runs and endings."""
+    if finale:
+        return (
+            '* This is the finale: use narration, dialogue, transition, or event steps only.\n'
+            '* Do NOT emit choice or prompt steps; next_choices must be empty on every step.\n'
+            '* Resolve established threads and close on a concrete image. The engine marks the ending.'
+        )
+    placement = (
+        "between step 10 and step 15"
+        if max_steps >= 15 else f"at the final step (step {max_steps})"
+    )
+    return (
+        f'* Place exactly ONE decision point (choice or prompt) {placement}.\n'
+        '* Before it, develop the consequences of the PREVIOUS player action.\n'
+        '* After it, only brief, neutral narration or dialogue in the SAME location with\n'
+        '  the SAME cast. These buffered beats must remain true for EVERY offered answer,\n'
+        '  including refusal or silence. Never resolve or react to that unanswered choice.\n'
+        '* No transitions, new events, relationship_changes, emotions, flags_set, or memory\n'
+        '  after the decision. Do not advance time, introduce someone, or assume agreement.'
+    )
 
 
 def build_system_prompt(
@@ -76,6 +106,7 @@ def build_system_prompt(
     min_steps: int = 3,
     min_choices: int = 3,
     max_choices: int = 5,
+    finale: bool = False,
 ) -> str:
     cast = "\n".join(f"  - {character.brief()}" for character in world.characters)
     expressions = "\n".join(
@@ -83,6 +114,14 @@ def build_system_prompt(
     )
     locations = "\n".join(f"  - {location.brief()}" for location in world.locations)
     safety = "\n".join(f"  - {line}" for line in world.safety) or "  - Keep it age-appropriate."
+    agency_rule = (
+        "In this epilogue, you may describe actions that follow from choices already made. "
+        "Do not invent a new commitment, confession, or relationship for the player."
+        if finale else
+        "Never narrate a decision, speech, or deliberate action by the player. "
+        "You may describe what happens to them and what others do in front of them. "
+        'Bad: "You kiss Aiko." Good: "Aiko moves closer, waiting to see what you will do."'
+    )
 
     return f"""You are the narrative director of Decalove, a visual novel. You write the story a
 player is living through, one run of beats at a time.
@@ -90,6 +129,9 @@ player is living through, one run of beats at a time.
 WORLD: {world.title}
 PREMISE: {world.premise}
 TONE: {world.tone}
+
+STORY THROUGHLINE (direction, not events that have already occurred)
+{world.story_premise or world.premise}
 
 CAST
 {cast}
@@ -108,6 +150,8 @@ LOCATIONS (only these ids exist)
         safety=safety,
         min_choices=min_choices,
         max_choices=max_choices,
+        decision_contract=decision_contract(max_steps, finale=finale),
+        agency_rule=agency_rule,
     )}"""
 
 
@@ -124,12 +168,15 @@ def _fill(template: str, session: GameSession) -> str:
 
 
 def _render_step(step: StoryStep) -> str:
+    parts = []
+    if step.narration:
+        parts.append(step.narration)
     if step.dialogue:
-        return f"    [{step.index}] {step.dialogue.speaker}: \"{step.dialogue.text}\""
+        parts.append(f'{step.dialogue.speaker}: "{step.dialogue.text}"')
     if step.type.is_blocking and step.next_choices:
         options = " | ".join(choice.text for choice in step.next_choices)
-        return f"    [{step.index}] (offered: {options})"
-    return f"    [{step.index}] {step.narration or '(silence)'}"
+        parts.append(f"(offered: {options})")
+    return f"    [{step.index}] {' / '.join(parts) or '(silence)'}"
 
 
 def build_context(
@@ -166,6 +213,22 @@ def build_context(
     recent_flags = list(session.world.flags.items())[-MAX_RENDERED_FLAGS:]
     flags = ", ".join(f"{k}={v}" for k, v in recent_flags) or "(none)"
 
+    threads = []
+    for character in world.characters:
+        state = session.characters.get(character.id)
+        if not state or not (state.met or character.id in session.world.present_characters):
+            continue
+        if not character.secret:
+            continue
+        may_open_up = state.value("trust") >= 45 and state.value("familiarity") >= 45
+        gate = (
+            "Trust supports a partial, voluntary disclosure if this conversation invites it."
+            if may_open_up else
+            "Keep this private; show an indirect habit or deflection instead of a disclosure."
+        )
+        threads.append(f"    - {character.id}: {character.secret} {gate}")
+    private_threads = "\n".join(threads) or "    - (none in focus)"
+
     return f"""PLAYER
     {session.player.describe()}
 
@@ -180,11 +243,18 @@ CHARACTER STATES
 RELEVANT MEMORIES
 {memory_lines}
 
+PRIVATE CHARACTER THREADS (writer reference, NOT shared knowledge)
+{private_threads}
+    Never give one character another's secret. If delivered history already establishes
+    a disclosure, preserve that fact even if trust has since fallen. Do not repeat a reveal.
+
 STORY SO FAR
 {arc_summary}
 
 RECENT STEPS
-{history}"""
+{history}
+    The delivery cursor is {session.cursor}. Later indices are buffered prose, not new
+    player decisions. Offered options are possibilities, not actions that happened."""
 
 
 def build_run_prompt(
@@ -228,11 +298,10 @@ PLAYER ACTION
 tone={intent.emotion or '-'}, risk={intent.risk.value}
     Attempt: {_fill(intent.summary, session) if intent.summary else '(none stated)'}
 
-Write what happens next as a {max_steps}-step sequence. The player has attempted something; you decide whether it lands,
-how each character present actually reacts given their stance above, and what it costs or
-earns. The attempt does not have to succeed. Place exactly one decision point (choice or prompt)
-between step 10 and step 15 of the sequence, and continue the immediate scene with narration and dialogue
-through step {max_steps}.
+Write what happens next as a {max_steps}-step sequence. Respond to the player's specific
+attempt using the character stances and established facts above.
+
+{decision_contract(max_steps, finale=directive.is_finale)}
 
 Return exactly {max_steps} steps."""
 
