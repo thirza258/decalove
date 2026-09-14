@@ -129,7 +129,7 @@ class MongoMemoryRepository:
     async def add(self, record: MemoryRecord) -> None:
         document = _dump(record)
         document["_id"] = document.pop("id")
-        await self._col.insert_one(document)
+        await self._col.update_one({"_id": document["_id"]}, {"$setOnInsert": document}, upsert=True)
 
     async def purge_game(self, game_id: str) -> int:
         result = await self._col.delete_many({"game_id": game_id})

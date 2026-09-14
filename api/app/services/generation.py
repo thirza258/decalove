@@ -346,10 +346,8 @@ class GenerationService:
         )
         try:
             recall = self.memory.recall(snapshot.id, query, characters=focus)
-            memories = await asyncio.wait_for(recall, timeout=5) if self.narrative.web_mode else await recall
+            memories = await asyncio.wait_for(recall, timeout=5)
         except Exception:
-            if not self.narrative.web_mode:
-                raise
             # Recent dialogue and state remain in the prompt even if retrieval is down.
             log.warning("memory recall unavailable for %s", snapshot.id, exc_info=True)
             memories = []

@@ -4,9 +4,9 @@ Companion to [`PRD.md`](./PRD.md). The PRD says *what* the product is; this file
 *how* it is being built, every place the implementation interprets or extends the PRD,
 and why.
 
-Status: **living document** — updated as the implementation lands. This revision reflects
-the working tree as of 2026-08-29 (20-step pipelined batches, local SDXL images, static
-opening in progress).
+Status: **living document**. Updated 2026-09-14 for chapter direction, neutral continuation
+beats, finale validation and bounded memory recovery. Story design lives in
+[`STORY.md`](./STORY.md).
 
 ---
 
@@ -22,8 +22,8 @@ The brief's worked example contained *"3. Player confirms."* and *"8. Player res
 — the AI scripting the player's actions, which Rule 1 of the same document forbids
 ("Bad: *You kiss Aiko.*").
 
-**Resolution — the batch contains exactly one decision point, and the model never writes
-past it.** A batch is not N steps that auto-play. It is a run of up to
+**Resolution — the batch contains exactly one decision point, and no consequences are
+written past it.** A batch is not N steps that auto-play. It is a run of up to
 `STEPS_PER_BATCH` steps with **exactly one blocking step** (a `choice` menu or a
 `prompt`), and the engine guarantees the invariant by construction:
 
@@ -32,8 +32,26 @@ past it.** A batch is not N steps that auto-play. It is a run of up to
   express anything the enum does not contain.
 - The validator converts any *extra* decision point to a plain beat, inserts one at
   step index 14 if the model produced none, and truncates the run at `STEPS_PER_BATCH`.
+- Any tail after that decision stays in the same location and cast. State proposals are
+  removed; transitions, events and new characters truncate the tail. The authored opening
+  follows this rule in both clients: its tail stays in the library.
+- A finale uses a separate prompt contract and has every decision removed, including
+  menus in the middle. Only the engine promotes the closing step to an ending.
 
-The engine never narrates a player decision; it hands the decision back.
+The engine hands each ordinary decision back to the player. Scene briefs are authored in
+`content/chapters.py`; the Director chooses chapter progression from delivered steps and
+the narrative prompt includes private, trust-sensitive character guidance. Repaired prose
+gets a derived summary when the original summary could describe discarded events.
+
+Story attempts have a per-provider timeout in every deployment mode. Memory recall has
+a five-second budget; embedding attempts have a one-second budget and a 30-second pause
+after failure. Local text retrieval compares both query and memories in the same hashed
+space when hosted vectors are unavailable. Delivery gives memory indexing two seconds;
+an unavailable index is logged and its proposal remains in the saved ledger. That index
+is written only after the delivery cursor is saved, is best-effort, and is not
+automatically rebuilt. Memory ids are derived from game,
+step and character, and both repositories insert each id once so delivery retries cannot
+multiply memories.
 
 ### 1.2 A flat rolling queue (original §14) contradicts dynamic branching (original §15)
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from app.content.world import Character, Location, World
+from app.content.chapters import CHAPTERS, STORY_PREMISE
 
 AIKO = Character(
     id="aiko",
@@ -369,6 +370,8 @@ HIGH_SCHOOL_ROMANCE = World(
     locations=LOCATIONS,
     opening_location="classroom",
     arcs=("prologue", "first_weeks", "festival", "summer", "resolution"),
+    story_premise=STORY_PREMISE,
+    chapters=CHAPTERS,
     art_style="anime visual novel key art, soft cel shading, warm rim light",
     wardrobe="Japanese high school uniform, navy blazer, white dress shirt",
     safety=(

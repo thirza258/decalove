@@ -60,7 +60,9 @@ class GameRepository(Protocol):
 class MemoryRepository(Protocol):
     name: str
 
-    async def add(self, record: MemoryRecord) -> None: ...
+    async def add(self, record: MemoryRecord) -> None:
+        """Insert once by id; replaying a delivered step must not duplicate its memory."""
+        ...
 
     async def for_game(self, game_id: str, character: str | None = None) -> list[MemoryRecord]: ...
 

@@ -77,7 +77,7 @@ class TestNewGame:
         updated = skip_resp.json()
         assert updated["current_step_index"] == 19
         assert updated["queue_depth"] == 0
-        assert updated["world"]["location"] == "rooftop"
+        assert updated["world"]["location"] == "library"
 
         # Submit choice from opening step 14 triggers next batch
         action_resp = client.post(

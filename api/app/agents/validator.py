@@ -6,8 +6,8 @@ back to the current location. Only when a step cannot be salvaged -- the model s
 the player, or wrote something that fails the content screen -- is the run cut at that
 point and everything after it discarded.
 
-The engine then guarantees the invariant the playback loop depends on: **every run ends
-in exactly one blocking step.**
+The engine guarantees one decision per ordinary run. Any buffered beats after it must
+keep the same scene and cannot change state. Finales contain no decisions.
 """
 
 from __future__ import annotations
@@ -138,6 +138,10 @@ class Validator:
                 break
 
             # -- Rule 3: world consistency ----------------------------------------------
+            if (not allow_ending and any(s.is_blocking for s in kept)
+                and step.location != location):
+                flag("continuity", "buffered tail moved after an unanswered decision", "truncated", index)
+                break
             if self.world.location(step.location) is None:
                 flag("world_consistency", f"unknown location {step.location!r}", "rewritten", index)
                 step.location = location
@@ -312,9 +316,49 @@ class Validator:
                 flag("run_structure", "inserted decision point at step index 14", "rewritten", 14)
             else:
                 flag("run_structure", "run did not end at a player decision", "rewritten", None)
-                kept.append(self._terminator(kept[-1]))
+                if len(kept) >= step_limit:
+                    kept[-1] = self._make_choice_step(kept[-1])
+                else:
+                    kept.append(self._terminator(kept[-1]))
+
+        if not allow_ending:
+            kept = self._neutral_tail(kept, flag)
 
         return ValidationReport(steps=kept, violations=violations)
+
+    def _neutral_tail(self, kept: list[GeneratedStep], flag) -> list[GeneratedStep]:
+        """Buffered prose cannot commit a branch before the player chooses it.
+
+        A scene change cannot be repaired by relabelling its location: the prose still
+        describes the wrong place. Keep the valid prefix and discard that tail instead.
+        Apply this after inserting a missing choice, so repaired runs obey the same rule.
+        """
+        boundary = next((i for i, step in enumerate(kept) if step.is_blocking), None)
+        if boundary is None:
+            return kept
+        question = kept[boundary]
+        present = set(question.characters)
+        for index in range(boundary + 1, len(kept)):
+            step = kept[index]
+            if (step.type in (StepType.transition, StepType.event)
+                or step.location != question.location
+                or not set(step.characters).issubset(present)
+                or (step.visual and step.visual.character
+                    and self.world.resolve_character(step.visual.character) not in present)):
+                flag("continuity", "buffered tail changed the scene after an unanswered decision", "truncated", index)
+                return kept[:index]
+            if step.relationship_changes or step.emotion or step.flags_set or step.memory:
+                flag("state_consistency", "buffered tail proposed consequences before the answer", "dropped", index)
+                step.relationship_changes = {}
+                step.emotion = {}
+                step.flags_set = {}
+                step.memory = None
+            step.characters = list(question.characters)
+            if step.visual:
+                step.visual.background = question.location
+                step.visual.time_of_day = question.visual.time_of_day if question.visual else None
+                step.visual.weather = question.visual.weather if question.visual else None
+        return kept
 
     def _make_choice_step(self, step: GeneratedStep) -> GeneratedStep:
         updated = step.model_copy(deep=True)
@@ -330,12 +374,15 @@ class Validator:
         any other run -- often with a decision point stapled on out of habit -- so the
         trailing question is dropped and whatever prose is left becomes the ending step.
         """
-        if kept[-1].type is StepType.ending:
-            return kept
-
-        while kept and kept[-1].is_blocking:
-            flag("run_structure", "dropped a decision point from the final run", "truncated", None)
-            kept.pop()
+        # A model can put a menu in the middle, not just at the end. Leaving one there
+        # stops clients at a question they cannot answer because the ending is queued.
+        prose = []
+        for index, step in enumerate(kept):
+            if step.is_blocking:
+                flag("run_structure", "dropped a decision point from the final run", "dropped", index)
+            else:
+                prose.append(step)
+        kept = prose
 
         if not kept:
             return kept

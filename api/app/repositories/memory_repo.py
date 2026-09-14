@@ -108,6 +108,8 @@ class InMemoryMemoryRepository:
         self._records: list[MemoryRecord] = []
 
     async def add(self, record: MemoryRecord) -> None:
+        if any(existing.id == record.id for existing in self._records):
+            return
         self._records.append(record.model_copy(deep=True))
 
     async def for_game(self, game_id: str, character: str | None = None) -> list[MemoryRecord]:

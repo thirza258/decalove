@@ -2,7 +2,7 @@
 
 > *A visual novel where the story is written for you, not just played by you.*
 
-A Ren'Py visual novel whose scenes are directed at runtime by an AI story engine. The
+A visual novel for the web and Ren'Py, directed at runtime by an AI story engine. The
 player reads dialogue and picks options like any VN — and can also just *type what they
 want to do*. The engine turns that into story, keeps four characters' relationships and
 memories straight, and generates the next run of beats behind the scenes so the seams
@@ -10,10 +10,18 @@ never show.
 
 ```
 game/          Ren'Py client  - presentation, input, placeholder art
+frontend/      React web client - the same story and player choices
 api/           FastAPI engine - director, narrative, validator, memory, images
 docs/PRD.md    the product spec
 docs/ARCHITECTURE.md   how it is built, and every place it departs from the spec
+docs/STORY.md  the chapter structure, character threads and writing standards
 ```
+
+The story follows a newcomer helping Class 2-B find its place through **A Place for Us**,
+a festival postcard exhibit. A blue notebook connects five chapters: first impressions,
+shared responsibilities, an imperfect festival, summer invitations, and promises worth
+keeping. Each character has something different at stake, and the player can decide how
+much to get involved. See the [story guide](docs/STORY.md).
 
 ## Run it
 
@@ -36,6 +44,14 @@ curl -s localhost:8000/health
 ```
 
 Then open this repository in the **Ren'Py launcher** and press Launch.
+
+For the web client, in another terminal:
+
+```bash
+cd frontend
+npm ci
+npm run dev
+```
 
 ### Turning the AI on
 
@@ -86,8 +102,12 @@ saves live in memory and generated art lands in `api/var/assets/`.
 cd api && .venv/bin/python -m pytest -q
 ```
 
-465 tests. None of them need an API key or the Ren'Py SDK; the integration suites need
+The tests need no API key or Ren'Py SDK; the integration suites need
 MongoDB and MinIO and skip themselves cleanly when those are not running.
+
+Client checks, from `frontend/`: `npm test`, `npm run build`, and `npm run lint`.
+Agent regression coverage includes provider timeouts, memory outages, retry idempotency,
+choice boundaries, opening handoff, chapter progression and complete playthroughs.
 
 ## How it works
 
@@ -110,21 +130,27 @@ Queue ran dry           ─┘    what they chose,          │              ◄
                                                      next run generates behind it
 ```
 
-Two things hold it together:
+The main guarantees:
 
 **The engine owns the state.** The model *proposes* relationship changes, flags and
 memories; the backend validates, clamps and commits them — and only when a step is
 actually delivered to the player. A generated run nobody read has changed nothing.
 
-**Every run ends where the player takes over.** A run is not ten beats that auto-play; it
-is up to ten beats that stop at the first moment requiring a decision. That is what keeps
-the AI from writing the player's lines for them, and it is what makes branching safe.
+**Choices divide consequences from anticipation.** A normal batch has up to 20 beats
+and one decision, requested at steps 10–15. Any remaining beats stay in the same scene
+and cannot change relationships, flags, emotions or memories. The next generated run
+responds to the answer. Finales have no decisions anywhere in the run.
 
 **The engine directs; the model writes.** Before anything is generated, the Director works
 out the shape of the scene from live state — how tense it should be, who carries it, how
 each character is currently disposed toward the player, and whether the attempt is allowed
 to fail. Teasing Aiko at affection 60 is a playful argument; at affection 20 it costs you
 trust. Same input, different scene, and it works with no API key at all.
+
+**Failures have bounded recovery paths.** Each story provider has an attempt timeout.
+Web mode tries its configured alternate AI models, then offers a retry of the same turn;
+offline mode can use authored prose. Embedding outages fall back to local text retrieval,
+and memory-index failures leave the proposal in the story ledger while playback continues.
 
 **And it ends.** A playthrough runs for more than 300 steps before the story is allowed to
 close, and which ending you get comes from how far you moved someone against where they

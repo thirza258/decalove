@@ -53,7 +53,7 @@ label decalove_static_opening:
     # Step 04
     hide ren
     show aiko composed at decalove_sprite_at with dissolve
-    "The morning drags on. Finally, the chime rings for the lunch break."
+    "Beside the clock, a festival notice reads: 'A Place for Us. One postcard. One place that matters.' The lunch chime cuts through the room."
 
 
     # =========================================================================
@@ -96,7 +96,7 @@ label decalove_static_opening:
 
     # Step 13
     hide haruto with dissolve
-    "He goes back to his work, leaving you to the quiet afternoon."
+    "Beside the returns tray lies a blue notebook marked 'A Place for Us'. Four different pens have annotated the plan. The volunteer page is still blank."
 
     # Step 14 - Choice Point 1
     "The afternoon opens up. What do you do with it?"
@@ -125,27 +125,22 @@ label decalove_static_opening:
 
 
     # =========================================================================
-    # PART 4: Rooftop (Sunset) — Steps 15 - 19
+    # PART 4: Library — neutral cover while the chosen branch generates
     # =========================================================================
     # Step 15
-    scene bg rooftop with dissolve
-    "You wind your way up the stairs, pushing open the heavy metal door to the roof."
+    "The library clock clicks into the space between conversations."
 
     # Step 16
-    "The city stretches out past the chain-link fence. The wind is sharper up here."
+    "A loose page lifts in the draft from the corridor, then settles."
 
     # Step 17
-    show aiko thoughtful at decalove_sprite_at with dissolve
-    aiko_char "It's a good view. People come up here when they need to think."
+    "Somewhere beyond the shelves, a book slides into its place."
 
     # Step 18
-    hide aiko with dissolve
-    "The sky begins to turn orange. The first day is almost over."
+    "The blue notebook rests beside the returns tray, open to the unfinished plan."
 
     # Step 19
-    show aiko thoughtful at decalove_sprite_at with dissolve
-    "The sunset paints everything in warm amber light as your first day draws to a close."
-    hide aiko with dissolve
+    "For a moment, the school is a collection of small sounds, each from a different direction."
 
     python:
         if store.decalove_game_id:

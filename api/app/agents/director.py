@@ -16,7 +16,7 @@ from app.agents.prompts import INTENT_SYSTEM, build_intent_prompt
 from app.agents.safety import SafetyFilter
 from app.content.world import World
 from app.domain.direction import DecisionContext, DecisionKind, Directive, Pacing, Stance
-from app.domain.enums import Risk, StepType
+from app.domain.enums import TIMES_OF_DAY, Risk, StepType
 from app.domain.intent import PlayerIntent
 from app.domain.state import CharacterState, GameSession
 from app.llm.base import ChatProvider, LLMError
@@ -117,12 +117,14 @@ class DirectorAgent:
         safety: SafetyFilter | None = None,
         temperature: float = 0.2,
         ending_min_steps: int = 300,
+        steps_per_arc: int = 60,
     ) -> None:
         self.world = world
         self.chat = chat
         self.safety = safety or SafetyFilter()
         self.temperature = temperature
         self.ending_min_steps = ending_min_steps
+        self.steps_per_arc = max(1, steps_per_arc)
 
     def parse_fast(self, session: GameSession, raw: str) -> tuple[PlayerIntent, bool]:
         """An intent with no network round-trip, and whether the model could do better.
@@ -289,6 +291,15 @@ class DirectorAgent:
             kind, partner = choose_ending(self.world, session)
             ending_kind, ending_partner = kind.value, partner
 
+        chapter = self.world.chapter(session.world.arc)
+        progression = ""
+        if chapter and chapter.progression:
+            arc_index = self.world.arcs.index(session.world.arc) if session.world.arc in self.world.arcs else 0
+            delivered_in_arc = max(0, session.cursor + 1 - arc_index * self.steps_per_arc)
+            phase = min(len(chapter.progression) - 1,
+                        delivered_in_arc * len(chapter.progression) // self.steps_per_arc)
+            progression = chapter.progression[phase]
+
         return Directive(
             pacing=pacing,
             tension=tension,
@@ -298,6 +309,10 @@ class DirectorAgent:
             allow_failure=allow_failure and not finale,
             push_location=None if finale else self._push_location(session, pacing),
             arc_note=_ARC_NOTES.get(session.world.arc, ""),
+            chapter_title=chapter.title if chapter else "",
+            chapter_question=chapter.question if chapter else "",
+            chapter_pressure=chapter.pressure if chapter else "",
+            chapter_progress=progression,
             style_note=session.style.note(),
             max_steps=max_steps,
             is_finale=finale,
@@ -471,6 +486,13 @@ class DirectorAgent:
         ]
         if not options:
             return None
+        # Prefer somewhere that can still be visited later today. Otherwise an even
+        # batch size can keep selecting morning-only rooms and skip every sunset.
+        if session.world.time_of_day in TIMES_OF_DAY:
+            later = TIMES_OF_DAY[TIMES_OF_DAY.index(session.world.time_of_day) + 1:]
+            same_day = [location for location in options
+                        if not location.times or any(slot in location.times for slot in later)]
+            options = same_day or options
         # Deterministic, so a replayed session moves the same way.
         return options[len(session.steps) % len(options)].id
 

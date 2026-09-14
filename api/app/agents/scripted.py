@@ -568,44 +568,38 @@ def classify(action: str) -> str:
     return "talk"
 
 
-CONTINUATION_LINES: dict[str, tuple[str, ...]] = {
+# These observations stay true even when a character declines to open up.
+MANNERISMS: dict[str, tuple[str, ...]] = {
     "aiko": (
-        "We should stay focused, but... thank you.",
-        "I appreciate you taking the time to listen.",
-        "Let's make sure we finish what we started.",
-        "I'm glad we could talk about this.",
+        "Aiko squares the notebook with the edge of the table, then notices herself doing it.",
+        "The cap of Aiko's pen is worn where she keeps turning it between her fingers.",
+        "Aiko checks a line in the margin before she looks up again.",
+        "For once, Aiko leaves a crooked corner alone.",
     ),
     "ren": (
-        "Never a dull moment with you around, is there?",
-        "I like the way you think.",
-        "Let's see where this goes.",
-        "Honestly, I wouldn't mind doing this again sometime.",
+        "Ren sketches a tiny face beside a heading. Its expression is difficult to place.",
+        "There is dried blue paint in the seam of Ren's cuff.",
+        "Ren holds the pencil above the page without making another mark.",
+        "Ren turns the notebook a little, leaving the unfinished sketch visible.",
     ),
     "mika": (
-        "Alright! Let's keep this momentum going!",
-        "Don't think you can outrun me though!",
-        "I'm holding you to that, got it?",
-        "See? That wasn't so hard after all!",
+        "Mika's tapping foot stops when she notices it competing with the conversation.",
+        "Mika rolls a scrap of paper into a ball, then smooths it out again.",
+        "The sleeve of Mika's track jacket is pushed above one elbow and caught below the other.",
+        "Mika gives the question the same direct attention she usually gives a starting line.",
     ),
     "haruto": (
-        "...Not a bad way to spend the afternoon.",
-        "I suppose I don't mind the company.",
-        "Let's see how it turns out.",
-        "I'll remember you said that.",
-    ),
-    GENERIC: (
-        "Let's keep going.",
-        "We'll see how this unfolds.",
-        "That works for me.",
+        "Haruto keeps one finger between the pages so he will not lose his place.",
+        "A pencil mark is almost invisible beneath Haruto's careful erasing.",
+        "Haruto moves the notebook clear of a damp ring on the table.",
+        "Haruto looks at the margin for a moment before looking back at the speaker.",
     ),
 }
 
-CONTINUATION_NARRATION: tuple[str, ...] = (
-    "The moment hangs in the air, the conversation settling into a natural rhythm.",
-    "Around you, the afternoon ambience carries on with quiet clarity.",
-    "A soft breeze passes through, leaving the atmosphere lighter than before.",
-    "You take a quiet breath as the conversation comes together.",
-    "The immediate tension fades, leaving space for whatever happens next.",
+NEUTRAL_PAUSES = (
+    "For a beat, no one adds anything.",
+    "The pause is brief enough for a thought to change shape.",
+    "Nobody tries to hurry the conversation.",
 )
 
 
@@ -639,7 +633,7 @@ class ScriptedNarrator:
         steps.append(self._dialogue("classroom", ren, self._opening_line(ren, player, second=True), emotion=ren.default_emotion, present=all_cast))
 
         # Steps 4-6 (Classroom -> Cafeteria transition, noon)
-        steps.append(self._narration("classroom", "The morning drags on. Finally, the chime rings for the lunch break.", visual_character=None, present=all_cast))
+        steps.append(self._narration("classroom", "Beside the clock, a festival notice reads: 'A Place for Us. One postcard. One place that matters.' The lunch chime cuts through the room.", visual_character=None, present=all_cast))
         steps.append(GeneratedStep(
             type=StepType.transition,
             location="cafeteria",
@@ -664,7 +658,7 @@ class ScriptedNarrator:
         ))
         steps.append(self._narration("library", "Tall shelves cast long shadows. You spot someone shelving books in the quiet corner.", visual_character=haruto.id, expression=haruto.default_emotion, present=all_cast))
         steps.append(self._dialogue("library", haruto, self._opening_line(haruto, player), emotion=haruto.default_emotion, present=all_cast))
-        steps.append(self._narration("library", "He goes back to his work, leaving you to the quiet afternoon.", visual_character=None, present=all_cast))
+        steps.append(self._narration("library", "Beside the returns tray lies a blue notebook marked 'A Place for Us'. Four different pens have annotated the plan. The volunteer page is still blank.", visual_character=None, present=all_cast))
 
         # Step 14 (15th step!) (Library, afternoon) - CHOICE
         aiko_fn = aiko.name.split()[0]
@@ -685,27 +679,17 @@ class ScriptedNarrator:
             narration="The afternoon opens up. What do you do with it?"
         ))
 
-        # Steps 15-18 (Rooftop, afternoon/sunset)
-        steps.append(GeneratedStep(
-            type=StepType.transition,
-            location="rooftop",
-            characters=all_cast,
-            narration="You wind your way up the stairs, pushing open the heavy metal door to the roof.",
-            visual=self._visual("rooftop", None)
-        ))
-        steps.append(self._narration("rooftop", "The city stretches out past the chain-link fence. The wind is sharper up here.", visual_character=None, present=all_cast))
-        steps.append(self._dialogue("rooftop", aiko, "It's a good view. People come up here when they need to think.", emotion="thoughtful" if "thoughtful" in aiko.expressions else aiko.default_emotion, present=all_cast))
-        steps.append(self._narration("rooftop", "The sky begins to turn orange. The first day is almost over.", visual_character=None, present=all_cast))
-        # Step 19 (Rooftop, sunset) - NARRATION (Smoothly finishes the static opening)
-        steps.append(self._narration(
-            "rooftop",
-            "The sunset paints everything in warm amber light as your first day draws to a close.",
-            visual_character=aiko.id,
-            expression="thoughtful" if "thoughtful" in aiko.expressions else aiko.default_emotion,
-            present=all_cast,
-        ))
+        # Steps 15-19 buy generation time without choosing a destination for the player.
+        for line in (
+            "The library clock clicks into the space between conversations.",
+            "A loose page lifts in the draft from the corridor, then settles.",
+            "Somewhere beyond the shelves, a book slides into its place.",
+            "The blue notebook rests beside the returns tray, open to the unfinished plan.",
+            "For a moment, the school is a collection of small sounds, each from a different direction.",
+        ):
+            steps.append(self._narration("library", line, visual_character=None, present=all_cast))
 
-        return GeneratedRun(steps=steps, summary=f"{player} survived their first day at school.")
+        return GeneratedRun(steps=steps, summary=f"{player} met Class 2-B and found the unfinished plan for the postcard exhibit, A Place for Us.")
 
     def finale(self, session: GameSession, directive: Directive) -> GeneratedRun:
         """The last run of the story. Terminates in a ``StepType.ending``."""
@@ -857,15 +841,19 @@ class ScriptedNarrator:
         if target:
             bank = rebuff.reply if rebuff else beat.reply
             lines = bank.get(target.id) or bank.get(GENERIC) or ("...",)
-            pre_steps.append(
-                self._dialogue(
-                    location.id,
-                    target,
-                    fill(rng.choice(lines)),
-                    emotion=emotion,
-                    present=present,
-                )
+            response = self._dialogue(
+                location.id,
+                target,
+                fill(rng.choice(lines)),
+                emotion=emotion,
+                present=present,
             )
+            # Keep the established per-turn relationship budget, but earn it on the
+            # actual response instead of crediting it after an unanswered choice.
+            if max_steps >= 15 and not rebuffed and beat.delta:
+                response.relationship_changes = {target.id: RelationshipDelta(**beat.delta)}
+                response.emotion = {target.id: emotion}
+            pre_steps.append(response)
 
         follow = self._narration(
             location.id,
@@ -908,145 +896,48 @@ class ScriptedNarrator:
             steps = body + [choice_step]
         else:
             # Standard 20-step buffered pipeline run
-            detail_lines = [
-                f"The light across the {location.in_prose} shifts quietly as the conversation unfolds.",
-                f"{short} pauses for a second, looking over at {player}.",
-                f"The air between them feels noticeably warmer now." if not rebuffed else f"An awkward quiet settles between them.",
-                f"Somewhere nearby, a chime rings, marking the quiet passage of time.",
-                f"{short} adjusts {t_their} posture, listening carefully.",
-                f"Outside, a gentle breeze rustles against the glass.",
-                f"{short} takes a quiet breath, considering the moment.",
-                f"The silence lingers comfortably, carrying a sense of understanding." if not rebuffed else f"The conversation draws to an uneasy pause.",
-                f"{short} looks like {t_they} wants to say more.",
-            ]
+            chapter = world.chapter(session.world.arc)
+            detail_lines = list(chapter.details) if chapter else list(location.ambience)
+            # Start at a different concrete detail each turn, without repeating it in a run.
+            rng.shuffle(detail_lines)
+            detail_steps = [self._narration(
+                location.id, line, visual_character=target.id if target else None,
+                expression=emotion, present=present,
+            ) for line in detail_lines]
+            if chapter and target and not rebuffed and family != "observe":
+                for index, line in enumerate(chapter.lines.get(target.id, ())):
+                    detail_steps.insert(min(index * 2 + 1, len(detail_steps)), self._dialogue(
+                        location.id, target, line, emotion=emotion, present=present,
+                    ))
+                if chapter.choices:
+                    # Keep the existing action-specific alternatives and add one concrete
+                    # way into this chapter, rather than replacing the player's subject.
+                    offered = [c.text for c in choice_step.next_choices]
+                    offered[-1] = fill(rng.choice(chapter.choices))
+                    choice_step.next_choices = [Choice(id=f"choice_{i + 1}", text=text)
+                                                for i, text in enumerate(offered)]
+            detail_steps.extend(self._narration(
+                location.id, line, visual_character=target.id if target else None,
+                expression=emotion, present=present,
+            ) for line in MANNERISMS.get(target.id if target else "", ()))
 
-            while len(pre_steps) < 14:
-                idx = len(pre_steps)
-                line_idx = (idx - 5) % len(detail_lines)
-                pre_steps.append(
-                    self._narration(
-                        location.id,
-                        fill(detail_lines[line_idx]),
-                        visual_character=target.id if target else None,
-                        expression=emotion,
-                        present=present,
-                    )
-                )
+            for detail in detail_steps:
+                if len(pre_steps) >= 14:
+                    break
+                pre_steps.append(detail)
 
             pre_steps = pre_steps[:14]
 
-            post_steps: list[GeneratedStep] = []
-            if not rebuffed:
-                c_lines = CONTINUATION_LINES.get(target.id if target else "", CONTINUATION_LINES[GENERIC])
-                cont_narr = self._narration(
-                    location.id,
-                    fill(CONTINUATION_NARRATION[0]),
-                    visual_character=target.id if target else None,
-                    expression=emotion,
-                    present=present,
-                )
-                if target and delta:
-                    cont_narr.relationship_changes = {target.id: RelationshipDelta(**delta)}
-                    cont_narr.emotion = {target.id: emotion}
-                post_steps.append(cont_narr)
-                if target:
-                    post_steps.append(
-                        self._dialogue(
-                            location.id,
-                            target,
-                            fill(c_lines[0 % len(c_lines)]),
-                            emotion=emotion,
-                            present=present,
-                        )
-                    )
-                post_steps.append(
-                    self._narration(
-                        location.id,
-                        fill(CONTINUATION_NARRATION[1 % len(CONTINUATION_NARRATION)]),
-                        visual_character=target.id if target else None,
-                        expression=emotion,
-                        present=present,
-                    )
-                )
-                if target:
-                    post_steps.append(
-                        self._dialogue(
-                            location.id,
-                            target,
-                            fill(c_lines[1 % len(c_lines)]),
-                            emotion=emotion,
-                            present=present,
-                        )
-                    )
-                post_steps.append(
-                    self._narration(
-                        location.id,
-                        fill(CONTINUATION_NARRATION[2 % len(CONTINUATION_NARRATION)]),
-                        visual_character=target.id if target else None,
-                        expression=emotion,
-                        present=present,
-                    )
-                )
-            else:
-                post_steps.append(
-                    self._narration(
-                        location.id,
-                        fill("There is not much more to say for now."),
-                        visual_character=target.id if target else None,
-                        expression=emotion,
-                        present=present,
-                    )
-                )
-                post_steps.append(
-                    self._narration(
-                        location.id,
-                        fill("A quiet breath settles, letting the moment pass."),
-                        visual_character=target.id if target else None,
-                        expression=emotion,
-                        present=present,
-                    )
-                )
-                post_steps.append(
-                    self._narration(
-                        location.id,
-                        fill("The school day moves on regardless."),
-                        visual_character=target.id if target else None,
-                        expression=emotion,
-                        present=present,
-                    )
-                )
-                post_steps.append(
-                    self._narration(
-                        location.id,
-                        fill("The moment clears, leaving room to look around."),
-                        visual_character=target.id if target else None,
-                        expression=emotion,
-                        present=present,
-                    )
-                )
-                post_steps.append(
-                    self._narration(
-                        location.id,
-                        fill("The hallway is quiet again."),
-                        visual_character=target.id if target else None,
-                        expression=emotion,
-                        present=present,
-                    )
-                )
-
+            # These are latency cover, not the answer to the menu above. They must
+            # work for a yes, a refusal, a change of subject, or a custom response.
+            tail_lines = (*location.ambience, *NEUTRAL_PAUSES)
             needed_post = max(0, max_steps - len(pre_steps) - 1)
-            while len(post_steps) < needed_post:
-                idx = len(post_steps)
-                post_steps.append(
-                    self._narration(
-                        location.id,
-                        fill(CONTINUATION_NARRATION[idx % len(CONTINUATION_NARRATION)]),
-                        visual_character=target.id if target else None,
-                        expression=emotion,
-                        present=present,
-                    )
-                )
-            steps = pre_steps + [choice_step] + post_steps[:needed_post]
+            post_steps = [self._narration(
+                location.id, tail_lines[index % len(tail_lines)],
+                visual_character=target.id if target else None,
+                expression=emotion, present=present,
+            ) for index in range(needed_post)]
+            steps = pre_steps + [choice_step] + post_steps
 
         who = short if target else "the room"
         outcome = "turned it down" if rebuff else "took it well enough"

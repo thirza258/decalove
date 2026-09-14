@@ -63,10 +63,9 @@ function speak(
 /** Steps 00-14: classroom, cafeteria, library, ending on the first decision. */
 export const OPENING_BEFORE_CHOICE: StoryStep[] = [
   // -- Classroom (morning), steps 00-04 --
-  narrate("classroom", "You have transferred into Class 2-B six weeks into the school year."),
   narrate(
     "classroom",
-    "The seats are arranged, the cliques are set, and everyone has already decided who they are.",
+    "You have transferred into Class 2-B six weeks into the school year. The seats are arranged, the cliques are set, and everyone has already decided who they are.",
   ),
   narrate(
     "classroom",
@@ -88,7 +87,7 @@ export const OPENING_BEFORE_CHOICE: StoryStep[] = [
   ),
   narrate(
     "classroom",
-    "The morning drags on. Finally, the chime rings for the lunch break.",
+    "Beside the clock, a festival notice reads: 'A Place for Us. One postcard. One place that matters.' The lunch chime cuts through the room.",
     "aiko",
     "composed",
   ),
@@ -128,7 +127,7 @@ export const OPENING_BEFORE_CHOICE: StoryStep[] = [
     "composed",
   ),
   speak("library", "haruto", "composed", "...You're in my light."),
-  narrate("library", "He goes back to his work, leaving you to the quiet afternoon."),
+  narrate("library", "Beside the returns tray lies a blue notebook marked 'A Place for Us'. Four different pens have annotated the plan. The volunteer page is still blank."),
   step("library", {
     type: "choice",
     narration: "The afternoon opens up. What do you do with it?",
@@ -143,19 +142,11 @@ export const OPENING_BEFORE_CHOICE: StoryStep[] = [
   }),
 ];
 
-/** Steps 15-19: the rooftop, played after the choice has been sent. */
+/** Steps 15-19: neutral library beats while the chosen branch generates. */
 export const OPENING_AFTER_CHOICE: StoryStep[] = [
-  narrate(
-    "rooftop",
-    "You wind your way up the stairs, pushing open the heavy metal door to the roof.",
-  ),
-  narrate("rooftop", "The city stretches out past the chain-link fence. The wind is sharper up here."),
-  speak("rooftop", "aiko", "thoughtful", "It's a good view. People come up here when they need to think."),
-  narrate("rooftop", "The sky begins to turn orange. The first day is almost over."),
-  narrate(
-    "rooftop",
-    "The sunset paints everything in warm amber light as your first day draws to a close.",
-    "aiko",
-    "thoughtful",
-  ),
+  narrate("library", "The library clock clicks into the space between conversations."),
+  narrate("library", "A loose page lifts in the draft from the corridor, then settles."),
+  narrate("library", "Somewhere beyond the shelves, a book slides into its place."),
+  narrate("library", "The blue notebook rests beside the returns tray, open to the unfinished plan."),
+  narrate("library", "For a moment, the school is a collection of small sounds, each from a different direction."),
 ];

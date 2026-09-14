@@ -1,8 +1,8 @@
 """
 Narrative Agent — PRD §9.4 and the ten-step generation of §10.
 
-One call produces one *run*: a linear sequence of beats that stops the moment the player
-must decide again (docs/ARCHITECTURE.md §1.1). Everything it returns passes through the
+One call produces one *run*: a scene with one decision and an optional neutral tail
+(docs/ARCHITECTURE.md §1.1). Everything it returns passes through the
 validator before the caller sees it, and if the model is unavailable, returns garbage, or
 returns something unrepairable, alternate models are tried. Web mode reports exhaustion
 so the player can retry the same turn; other deployments keep the scripted fallback.
@@ -83,6 +83,10 @@ class NarrativeAgent:
             min_choices=min_choices,
             max_choices=max_choices,
         )
+        self._finale_system = build_system_prompt(
+            world, max_steps=max_steps, max_delta=max_delta, rating=rating,
+            min_choices=min_choices, max_choices=max_choices, finale=True,
+        )
         self._schema = strict_schema(LLMRun)
 
     # -- public ------------------------------------------------------------------------
@@ -114,10 +118,7 @@ class NarrativeAgent:
                 work = self._generate_with_llm(
                     session, intent, memories, decision, directive, provider=provider
                 )
-                run = (
-                    await asyncio.wait_for(work, timeout=self.attempt_timeout_s)
-                    if self.web_mode else await work
-                )
+                run = await asyncio.wait_for(work, timeout=self.attempt_timeout_s)
                 result = self._finish(
                     run, session, used_fallback=index > 0, provider=provider.name, directive=directive
                 )
@@ -165,7 +166,7 @@ class NarrativeAgent:
         provider = provider or self.chat
         assert provider is not None
         payload = await provider.complete_json(
-            system=self._system,
+            system=self._finale_system if directive.is_finale else self._system,
             user=build_run_prompt(
                 self.world,
                 session,
@@ -199,7 +200,13 @@ class NarrativeAgent:
             allow_ending=bool(directive and directive.is_finale),
             is_opening=is_opening,
         )
-        summary = run.summary.strip() or self._derive_summary(report.steps)
+        # A repaired run may have discarded the event its summary describes. Do not
+        # teach later generations that an invalid or unplayed consequence happened.
+        summary = (
+            self._derive_summary(report.steps)
+            if any(v.rule != "run_structure" or v.remedy == "truncated" for v in report.violations)
+            else run.summary.strip() or self._derive_summary(report.steps)
+        )
         return RunResult(
             steps=report.steps,
             summary=summary,
@@ -210,9 +217,12 @@ class NarrativeAgent:
 
     @staticmethod
     def _derive_summary(steps: list[GeneratedStep]) -> str:
-        for step in reversed(steps):
+        lines = []
+        for step in steps:
+            if step.is_blocking:
+                break
             if step.dialogue:
-                return f"{step.dialogue.speaker}: {step.dialogue.text[:120]}"
-            if step.narration:
-                return step.narration[:120]
-        return "the scene continued"
+                lines.append(f"{step.dialogue.speaker}: {step.dialogue.text[:160]}")
+            elif step.narration:
+                lines.append(step.narration[:160])
+        return " / ".join(lines[-3:]) or "The scene paused for the player's response."
