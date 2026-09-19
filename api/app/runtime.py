@@ -47,6 +47,9 @@ from app.services.asset_service import AssetService
 from app.services.game_service import GameService
 from app.services.generation import GenerationService
 from app.services.maintenance import MaintenanceService
+from app.services.writing_service import WritingService
+from app.services.writing_storage import WritingStorage
+from app.repositories.writing_repo import InMemoryWritingRepository, MongoWritingRepository
 from app.storage import init_minio
 
 log = logging.getLogger(__name__)
@@ -67,6 +70,8 @@ class Runtime:
     game_service: GameService
     asset_service: AssetService
     maintenance: MaintenanceService
+    writing: WritingService
+    writing_storage: WritingStorage
     storage_backend: str
     asset_backend: str
 
@@ -387,6 +392,16 @@ async def build_runtime(settings: Settings) -> Runtime:
         game_service=game_service,
         asset_service=asset_service,
         maintenance=maintenance,
+        writing=WritingService(
+            ([chat] if chat else []) + fallback_chats,
+            attempt_timeout_s=settings.WEB_AI_ATTEMPT_TIMEOUT_S,
+            total_timeout_s=settings.GENERATION_TIMEOUT_S,
+            max_tokens=settings.MAX_OUTPUT_TOKENS,
+        ),
+        writing_storage=WritingStorage(
+            MongoWritingRepository(get_db()) if storage_backend == "mongo" else InMemoryWritingRepository(),
+            store, backend=storage_backend,
+        ),
         storage_backend=storage_backend,
         asset_backend=asset_backend,
     )

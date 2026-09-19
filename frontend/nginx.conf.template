@@ -20,6 +20,9 @@ server {
     # matched path itself, and $request_uri is the full original path *and* query string
     # -- which is what carries ?wait_ms= through to the long poll.
     location /api/ {
+        # A writing workspace contains several chapter drafts and course exercises.
+        # Allow its bounded JSON payload (including escaped Unicode) through the proxy.
+        client_max_body_size 12m;
         set $decalove_upstream "${DECALOVE_API_UPSTREAM}";
         proxy_pass $decalove_upstream$request_uri;
         proxy_http_version 1.1;

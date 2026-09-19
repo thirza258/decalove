@@ -81,7 +81,7 @@ services:
     restart: unless-stopped
 
   minio:
-    image: minio/minio
+    image: quay.io/minio/minio
     container_name: decalove-minio
     ports:
       - "9000:9000"   # S3 API

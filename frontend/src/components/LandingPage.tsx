@@ -58,6 +58,10 @@ export function LandingPage({ onPlay }: LandingPageProps) {
     >
       {/* ── Hero ── */}
       <section className="relative h-screen w-full overflow-hidden">
+        <nav className="landing-writing-nav" aria-label="Main navigation">
+          <a href="#/courses">Writing courses</a>
+          <a href="#/studio">Script & novel studio ↗</a>
+        </nav>
         {/* Background — rooftop sunset, dimmed */}
         <img
           src="/images/bg/rooftop_sunset.png"
@@ -88,6 +92,7 @@ export function LandingPage({ onPlay }: LandingPageProps) {
           >
             Play Now
           </button>
+          <div className="landing-writing-links"><a href="#/courses">Learn the craft</a><span aria-hidden="true">·</span><a href="#/studio">Write your own story ↗</a></div>
         </div>
 
         {/* Scroll hint */}

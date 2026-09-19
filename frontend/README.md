@@ -6,6 +6,11 @@ names, same static-art layout, same 1280×720 presentation as `game/`.
 
 The backend owns the story; this owns presentation (PRD §20).
 
+The landing page also links to **Writing courses** (`#/courses`) and **Writing Studio**
+(`#/studio`). These independent authoring pages include detailed lessons, rich-text
+tools, context-aware AI assistance, MongoDB autosave, and MinIO document files. See the
+[writing guide](../docs/WRITING.md) for the workflow, shortcuts, storage, and API.
+
 ## Running it
 
 ```bash

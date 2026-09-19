@@ -6,7 +6,7 @@
  * only decides which screen is on top.
  */
 
-import { useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { ChoiceMenu } from "./components/ChoiceMenu";
 import { DialogueBox } from "./components/DialogueBox";
 import { FreeTextInput } from "./components/FreeTextInput";
@@ -24,6 +24,20 @@ import { StageFrame } from "./components/StageFrame";
 import { useDecalove } from "./hooks/useDecalove";
 import { useTypewriter } from "./hooks/useTypewriter";
 import { humanise } from "./game/art";
+import "./writing.css";
+import { WritingWorkspaceProvider } from "./writing/workspace";
+
+const CoursesPage = lazy(() => import("./components/CoursesPage"));
+const WritingStudio = lazy(() => import("./components/WritingStudio"));
+
+function currentPage() {
+  const page = window.location.hash.slice(2).split("?")[0];
+  return ["play", "courses", "studio"].includes(page) ? page : "home";
+}
+
+function currentWorkspace() {
+  return new URLSearchParams(window.location.hash.split("?")[1] ?? "").get("workspace") ?? "current";
+}
 
 /** `label decalove_intro` — three lines before the player is asked anything. */
 const INTRO = [
@@ -33,7 +47,32 @@ const INTRO = [
 ];
 
 export default function App() {
-  const [playing, setPlaying] = useState(false);
+  const [page, setPage] = useState(currentPage);
+  const [workspaceKey, setWorkspaceKey] = useState(currentWorkspace);
+  const [exercise, setExercise] = useState("");
+  useEffect(() => {
+    const navigate = () => {
+      setPage(currentPage());
+      setWorkspaceKey(currentWorkspace());
+      const root = document.getElementById("root");
+      if (root) root.scrollTop = 0;
+    };
+    window.addEventListener("hashchange", navigate);
+    return () => window.removeEventListener("hashchange", navigate);
+  }, []);
+  if (page === "play") return <GamePlayer onHome={() => { window.location.hash = "/"; }} />;
+  if (page === "home") return <LandingPage onPlay={() => { window.location.hash = "/play"; }} />;
+  return (
+    <Suspense fallback={<div className="writing-app writing-loading" role="status">Opening the writing room…</div>}>
+      <WritingWorkspaceProvider key={workspaceKey}>
+        {page === "courses" ? <CoursesPage onPractice={(prompt) => { setExercise(prompt); window.location.hash = "/studio"; }} />
+          : <WritingStudio exercise={exercise} onExerciseUsed={() => setExercise("")} />}
+      </WritingWorkspaceProvider>
+    </Suspense>
+  );
+}
+
+function GamePlayer({ onHome }: { onHome: () => void }) {
   const game = useDecalove();
   const { state } = game;
 
@@ -71,11 +110,6 @@ export default function App() {
     game.advance();
   };
 
-  // Show the landing page until the player clicks "Play Now".
-  if (!playing) {
-    return <LandingPage onPlay={() => setPlaying(true)} />;
-  }
-
   if (state.phase === "boot") {
     return <StageFrame><Booting /></StageFrame>;
   }
@@ -102,7 +136,7 @@ export default function App() {
         <TitleScreen
           title={state.world?.title ?? "Decalove"}
           onStart={game.startNewGame}
-          onHome={() => setPlaying(false)}
+          onHome={onHome}
         />
       </StageFrame>
     );
