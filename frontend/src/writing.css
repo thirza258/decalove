@@ -48,9 +48,6 @@
 .writing-loading { display: grid; place-items: center; }
 .writing-footer { display: flex; justify-content: space-between; padding: 28px 4.2%; color: var(--green); border-top: 1px solid var(--line); font-size: 13px; }
 .writing-footer span { color: var(--soft-ink); font-size: 12px; }
-.landing-writing-nav { position: absolute; z-index: 20; right: 5%; top: 28px; display: flex; gap: 28px; font-size: 14px; color: #eee; }
-.landing-writing-nav a:hover, .landing-writing-links a:hover { color: #66c1e0; }
-.landing-writing-links { display: flex; gap: 15px; margin-top: 23px; color: #eee; font-size: 14px; }
 
 /* A small writing school, with complete lessons and room to practise. */
 .courses-main { max-width: 1240px; padding: 0 48px 64px; margin: auto; }
@@ -387,7 +384,6 @@
   .editor-status span:last-child { display: none; }
   .writing-footer { padding: 22px 20px; font-size: 12px; }
   .writing-footer span { font-size: 10px; }
-  .landing-writing-nav { font-size: 12px; gap: 18px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .course-card, .writing-button { transition: none; }
