@@ -131,9 +131,9 @@ class TestAssetServiceOnMinio:
         class CountingProvider(PlaceholderImageProvider):
             name = "counting"
 
-            async def generate(self, prompt, *, width=1024, height=576):
+            async def generate(self, prompt, *, width=1024, height=576, seed=None, negative=None):
                 calls.append(prompt)
-                return await super().generate(prompt, width=width, height=height)
+                return await super().generate(prompt, width=width, height=height, seed=seed, negative=negative)
 
         service = AssetService(repository, MinioAssetStore(), CountingProvider(), enabled=True)
         spec = AssetSpec(kind="character", cache_key="ch_aiko_surprised", prompt="aiko, surprised")

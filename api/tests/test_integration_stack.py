@@ -37,6 +37,10 @@ def stack(monkeypatch):
     monkeypatch.setattr(settings, "OPENROUTER_API_KEY", "")
     monkeypatch.setattr(settings, "IMAGE_GENERATION_ENABLED", True)
     monkeypatch.setattr(settings, "IMAGE_BACKEND", "placeholder")
+    # This fixture verifies generated art, so neither deployment mode nor the
+    # production sampling probability should randomly prevent an image request.
+    monkeypatch.setattr(settings, "WEB_MODE", False)
+    monkeypatch.setattr(settings, "IMAGE_GENERATION_PROBABILITY", 1.0)
 
     from app.storage import storage
 

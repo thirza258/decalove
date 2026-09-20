@@ -1,199 +1,216 @@
-/**
- * Landing page for Decalove — a simple, atmospheric introduction to the game.
- *
- * Uses the existing generated character previews and one background from
- * public/images/ so there is no extra asset pipeline to maintain.
- */
+import type { MouseEvent } from "react";
+import libraryAfternoon from "../assets/library-afternoon.jpg";
+import "../landing.css";
 
-import { useState, useEffect } from "react";
-
-const CHARACTERS = [
-  {
-    id: "aiko",
-    name: "Aiko Serizawa",
-    role: "Class Representative",
-    preview: "/images/characters/_preview_aiko.jpg",
-    color: "#e05a72",
-  },
-  {
-    id: "ren",
-    name: "Ren Hoshikawa",
-    role: "Art Club President",
-    preview: "/images/characters/_preview_ren.jpg",
-    color: "#f2b544",
-  },
-  {
-    id: "mika",
-    name: "Mika Todoroki",
-    role: "Track Team Ace",
-    preview: "/images/characters/_preview_mika.jpg",
-    color: "#4bb3a0",
-  },
-  {
-    id: "haruto",
-    name: "Haruto Amemiya",
-    role: "Library Aide",
-    preview: "/images/characters/_preview_haruto.jpg",
-    color: "#6c7ae0",
-  },
-];
+// Keep section navigation separate from the app's hash routes.
+function jumpToSection(event: MouseEvent<HTMLAnchorElement>, id: string) {
+  event.preventDefault();
+  const section = document.getElementById(id);
+  section?.focus({ preventScroll: true });
+  section?.scrollIntoView({
+    behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      ? "instant"
+      : "smooth",
+    block: "start",
+  });
+}
 
 interface LandingPageProps {
   onPlay: () => void;
 }
 
 export function LandingPage({ onPlay }: LandingPageProps) {
-  const [visible, setVisible] = useState(false);
-
-  useEffect(() => {
-    // Fade in on mount.
-    const timer = setTimeout(() => setVisible(true), 50);
-    return () => clearTimeout(timer);
-  }, []);
-
   return (
-    <div
-      className={`min-h-screen bg-vn-void text-white transition-opacity duration-700 ${visible ? "opacity-100" : "opacity-0"}`}
-      style={{ overflow: "auto" }}
-    >
-      {/* ── Hero ── */}
-      <section className="relative h-screen w-full overflow-hidden">
-        {/* Background — rooftop sunset, dimmed */}
-        <img
-          src="/images/bg/rooftop_sunset.png"
-          alt=""
-          className="absolute inset-0 h-full w-full object-cover opacity-40"
-        />
-        <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-vn-void" />
-
-        <div className="relative z-10 flex h-full flex-col items-center justify-center px-6">
-          <h1
-            className="text-center text-[72px] font-light tracking-widest"
-            style={{ textShadow: "0 2px 24px rgba(0,0,0,0.7)" }}
-          >
-            Decalove
-          </h1>
-          <p
-            className="mt-4 max-w-[600px] text-center text-[20px] leading-relaxed text-white/70"
-            style={{ textShadow: "0 1px 8px rgba(0,0,0,0.6)" }}
-          >
-            An AI-written visual novel set in a Japanese high school.
-            <br />
-            Every story is unique. Every choice matters.
-          </p>
-          <button
-            type="button"
-            onClick={onPlay}
-            className="mt-10 cursor-pointer border-2 border-vn-accent px-10 py-3 text-[22px] tracking-wide text-vn-accent transition-all duration-300 hover:bg-vn-accent hover:text-white"
-          >
-            Play Now
-          </button>
-        </div>
-
-        {/* Scroll hint */}
-        <div className="absolute inset-x-0 bottom-8 z-10 flex justify-center">
-          <span className="animate-bounce text-[14px] tracking-widest text-white/30 uppercase">
-            scroll
-          </span>
-        </div>
-      </section>
-
-      {/* ── About ── */}
-      <section className="mx-auto max-w-[900px] px-6 py-20">
-        <h2 className="text-center text-[36px] font-light tracking-wide text-white/90">
-          A story written as you read it
-        </h2>
-        <p className="mx-auto mt-6 max-w-[640px] text-center text-[18px] leading-relaxed text-white/50">
-          Six weeks into the school year, a transfer student walks into Class
-          2-B. Everyone else has already decided who they are. You haven't.
-          Navigate friendships, rivalries, and quiet moments in a story that
-          responds to every choice you make.
-        </p>
-
-        <div className="mt-16 grid grid-cols-1 gap-8 sm:grid-cols-3">
-          <Feature
-            title="AI-Generated Story"
-            description="Every playthrough writes a new narrative. No two stories are the same."
-          />
-          <Feature
-            title="Real Choices"
-            description="Type what you want to say, or pick from story-driven options. The story adapts."
-          />
-          <Feature
-            title="Living Characters"
-            description="Four classmates with their own personalities, secrets, and arcs that evolve with you."
-          />
-        </div>
-      </section>
-
-      {/* ── Characters ── */}
-      <section className="mx-auto max-w-[1000px] px-6 py-16">
-        <h2 className="text-center text-[36px] font-light tracking-wide text-white/90">
-          Meet the cast
-        </h2>
-        <div className="mt-12 grid grid-cols-2 gap-6 sm:grid-cols-4">
-          {CHARACTERS.map((char) => (
-            <CharacterCard key={char.id} {...char} />
-          ))}
-        </div>
-      </section>
-
-      {/* ── CTA ── */}
-      <section className="py-20 text-center">
-        <p className="text-[18px] text-white/40">
-          Ready to begin?
-        </p>
-        <button
-          type="button"
-          onClick={onPlay}
-          className="mt-6 cursor-pointer border-2 border-vn-accent px-10 py-3 text-[22px] tracking-wide text-vn-accent transition-all duration-300 hover:bg-vn-accent hover:text-white"
-        >
-          Start Your Story
-        </button>
-      </section>
-
-      {/* ── Footer ── */}
-      <footer className="border-t border-white/5 py-8 text-center text-[14px] text-white/20">
-        Decalove — AI-directed visual novel
-      </footer>
-    </div>
-  );
-}
-
-function Feature({ title, description }: { title: string; description: string }) {
-  return (
-    <div className="text-center">
-      <h3 className="text-[20px] text-vn-accent">{title}</h3>
-      <p className="mt-2 text-[16px] leading-relaxed text-white/45">{description}</p>
-    </div>
-  );
-}
-
-function CharacterCard({
-  name,
-  role,
-  preview,
-  color,
-}: {
-  name: string;
-  role: string;
-  preview: string;
-  color: string;
-}) {
-  return (
-    <div className="group flex flex-col items-center">
-      <div
-        className="h-[220px] w-[160px] overflow-hidden rounded-sm"
-        style={{ boxShadow: `0 0 20px ${color}22` }}
+    <div id="landing-top" className="landing-page" tabIndex={-1}>
+      <a
+        className="landing-skip-link"
+        href="#landing-main"
+        onClick={(event) => jumpToSection(event, "landing-main")}
       >
-        <img
-          src={preview}
-          alt={name}
-          className="h-full w-full object-cover object-top transition-transform duration-500 group-hover:scale-105"
-        />
-      </div>
-      <p className="mt-3 text-[16px] text-white/80" style={{ color }}>{name}</p>
-      <p className="text-[13px] text-white/35">{role}</p>
+        Skip to content
+      </a>
+
+      <header className="landing-header landing-container">
+        <a
+          className="landing-brand"
+          href="#/"
+          aria-label="Decalove home"
+          onClick={(event) => jumpToSection(event, "landing-top")}
+        >
+          <span className="landing-brand-mark" aria-hidden="true">d</span>
+          Decalove
+        </a>
+        <nav className="landing-nav" aria-label="Main navigation">
+          <button type="button" onClick={onPlay}>The game</button>
+          <a href="#/courses">Writing courses</a>
+          <a href="#/studio">Writing studio</a>
+        </nav>
+      </header>
+
+      <main id="landing-main" tabIndex={-1}>
+        <section className="landing-hero landing-container" aria-labelledby="landing-title">
+          <div>
+            <p className="landing-eyebrow">Play. Learn. Write.</p>
+            <h1 id="landing-title">A place for stories.<br />And a place for <em>yours.</em></h1>
+          </div>
+          <div className="landing-hero-copy">
+            <p>
+              Step into an interactive story, learn the craft behind it,
+              or bring your own ideas to the page. There’s a place for
+              every side of your imagination here.
+            </p>
+            <a
+              className="landing-text-link"
+              href="#explore"
+              onClick={(event) => jumpToSection(event, "explore")}
+            >
+              Find your starting point <span aria-hidden="true">↓</span>
+            </a>
+          </div>
+        </section>
+
+        <section id="explore" className="landing-explore landing-container" aria-labelledby="explore-title" tabIndex={-1}>
+          <div className="landing-section-heading">
+            <h2 id="explore-title">Make yourself at home.</h2>
+            <p>Three ways in. Start wherever you like.</p>
+          </div>
+
+          <div className="landing-paths">
+            <article className="landing-path" aria-labelledby="game-title">
+              <figure className="landing-game-preview">
+                <img
+                  src={libraryAfternoon}
+                  alt="A sunlit school library, with a blue notebook and postcards on a reading table."
+                  width={1536}
+                  height={1024}
+                  fetchPriority="high"
+                />
+                <figcaption>Second Year, Second Chances</figcaption>
+              </figure>
+              <div className="landing-path-content">
+                <p className="landing-eyebrow"><span aria-hidden="true">01 / </span>Play</p>
+                <h3 id="game-title">The game</h3>
+                <p className="landing-path-description">
+                  Find your place in Class 2-B. Meet Aiko, Ren, Mika,
+                  and Haruto in an AI-directed visual novel shaped
+                  by your choices.
+                </p>
+                <ul className="landing-path-features">
+                  <li>Four classmates to get to know</li>
+                  <li>Choose a response or write your own</li>
+                  <li>Friendship, romance, or a path of your own</li>
+                </ul>
+                <button className="landing-button" type="button" onClick={onPlay}>
+                  Play the game <span aria-hidden="true">→</span>
+                </button>
+              </div>
+            </article>
+
+            <article className="landing-path" aria-labelledby="courses-title">
+              <div className="landing-course-preview">
+                <p>Your writing toolkit</p>
+                <ol>
+                  <li><span aria-hidden="true">01</span>Build a story that moves</li>
+                  <li><span aria-hidden="true">02</span>Write dialogue with a pulse</li>
+                  <li><span aria-hidden="true">03</span>Find the question underneath</li>
+                </ol>
+              </div>
+              <div className="landing-path-content">
+                <p className="landing-eyebrow"><span aria-hidden="true">02 / </span>Learn</p>
+                <h3 id="courses-title">Writing courses</h3>
+                <p className="landing-path-description">
+                  Turn a good idea into a stronger story. Explore
+                  structure, dialogue, theme, book planning, narration,
+                  and revision, one lesson at a time.
+                </p>
+                <ul className="landing-path-features">
+                  <li>6 courses and 18 practical lessons</li>
+                  <li>Examples, exercises, and checklists</li>
+                  <li>Take your practice into the studio</li>
+                </ul>
+                <a className="landing-button" href="#/courses">
+                  Explore the courses <span aria-hidden="true">→</span>
+                </a>
+              </div>
+            </article>
+
+            <article className="landing-path" aria-labelledby="studio-title">
+              <div className="landing-studio-preview">
+                <div className="landing-manuscript" role="img" aria-label="Sample manuscript: A quiet afternoon. She set a second cup on the table. The kettle’s still warm, she said.">
+                  <div className="landing-manuscript-label">A first draft <span>Novel</span></div>
+                  <p className="landing-manuscript-title">A quiet afternoon</p>
+                  <p>She set a second cup on the table.<br />“The kettle’s still warm,” she said.</p>
+                </div>
+              </div>
+              <div className="landing-path-content">
+                <p className="landing-eyebrow"><span aria-hidden="true">03 / </span>Write</p>
+                <h3 id="studio-title">Writing studio</h3>
+                <p className="landing-path-description">
+                  Give your ideas room to grow. Plan your characters,
+                  draft a script or novel, and find your next line
+                  with an AI partner when you want one.
+                </p>
+                <ul className="landing-path-features">
+                  <li>Script and novel formats</li>
+                  <li>Story notes and rich-text editing</li>
+                  <li>AI suggestions you review and choose</li>
+                </ul>
+                <a className="landing-button" href="#/studio">
+                  Open the studio <span aria-hidden="true">→</span>
+                </a>
+              </div>
+            </article>
+          </div>
+          <p className="landing-browser-note">All in your browser. All at your own pace.</p>
+        </section>
+
+        <section className="landing-guide landing-container" aria-labelledby="guide-title">
+          <div className="landing-guide-intro">
+            <p className="landing-eyebrow">A little guidance</p>
+            <h2 id="guide-title">Follow your curiosity.</h2>
+            <p>Come for a story. Stay for the craft.<br />There’s no required order.</p>
+          </div>
+          <div className="landing-questions">
+            <details>
+              <summary>Do I need to play before I write?<span className="landing-detail-toggle" aria-hidden="true" /></summary>
+              <p>
+                Start with whichever part interests you. The game, courses,
+                and studio can each be used on their own. You can enjoy
+                the story, work through a lesson, or jump straight into a draft.
+              </p>
+            </details>
+            <details>
+              <summary>How do the courses connect to the studio?<span className="landing-detail-toggle" aria-hidden="true" /></summary>
+              <p>
+                Each lesson includes a practical exercise. Choose “Practice
+                in the studio” to open a new draft with the exercise,
+                craft guidance, and your practice notes ready to use.
+              </p>
+            </details>
+            <details>
+              <summary>How does the AI help?<span className="landing-detail-toggle" aria-hidden="true" /></summary>
+              <p>
+                In the game, AI develops the story around your choices.
+                In the studio, it can suggest scenes, continuations,
+                or revisions. You review each suggestion and decide
+                what becomes part of your manuscript.
+              </p>
+            </details>
+          </div>
+        </section>
+      </main>
+
+      <footer className="landing-footer landing-container">
+        <div>
+          <a className="landing-footer-brand" href="#/" onClick={(event) => jumpToSection(event, "landing-top")}>Decalove</a>
+          <span>Make room for your story.</span>
+        </div>
+        <nav aria-label="Explore Decalove">
+          <button type="button" onClick={onPlay}>The game</button>
+          <a href="#/courses">Courses</a>
+          <a href="#/studio">Writing studio</a>
+        </nav>
+      </footer>
     </div>
   );
 }

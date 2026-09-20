@@ -25,6 +25,10 @@ much to get involved. See the [story guide](docs/STORY.md).
 
 ## Run it
 
+The web client also includes [writing courses and a script/novel studio](docs/WRITING.md):
+18 detailed lessons, a rich-text manuscript editor, AI-assisted scenes with 50 dialogue
+lines by default, MongoDB drafts and course progress, and MinIO exports and backups.
+
 The backend runs with **no API key, no Docker, and no configuration**. In that mode the
 prose comes from an authored scripted narrator rather than a model — the game is fully
 playable, just not AI-written.

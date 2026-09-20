@@ -69,6 +69,11 @@ otherwise, and it is what the test suite exercises.
 Legacy authored-scene CRUD (`/scenes`, `/images`, `/seed`) predates the story engine and
 still requires MongoDB; it returns **503** when Mongo is down rather than a 500.
 
+The `/api/v1/writing` routes provide independent writing assistance and saved workspaces.
+They reuse this runtime's MongoDB database and MinIO bucket for manuscripts, course
+progress, exports, and backups. See the [writing guide](../docs/WRITING.md) for endpoints
+and failure behavior. No game state is changed by authoring requests.
+
 ### The playback contract
 
 `GET /steps/next` returns one of four statuses, and the client's whole loop is answering them:
