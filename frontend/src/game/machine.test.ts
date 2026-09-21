@@ -231,3 +231,69 @@ describe("the authored opening", () => {
     expect(state.buffer).toHaveLength(0);
   });
 });
+
+describe("where the player stands with everyone", () => {
+  const cast = {
+    aiko: { id: "aiko", name: "Aiko", relationship: { affection: 40, trust: 30 }, current_emotion: "composed", met: true },
+    ren: { id: "ren", name: "Ren", relationship: { affection: 20 }, current_emotion: "amused", met: false },
+  };
+  const synced: State = reduce(playing, { type: "state/synced", characters: cast });
+
+  it("moves with the beat the player is reading, and says what moved", () => {
+    const state = reduce(synced, { type: "batch/received", body: batch({ steps: [
+      step({ step_id: "s1", relationship_changes: { aiko: { affection: 3, trust: 1, respect: 0 } } }),
+    ] }) });
+
+    expect(state.standing.aiko.relationship).toEqual({ affection: 43, trust: 31 });
+    expect(state.standingDelta).toEqual({ aiko: { affection: 3, trust: 1 } });
+    expect(state.standingSeq).toBe(synced.standingSeq + 1);
+    expect(state.standing.ren.relationship.affection).toBe(20);
+  });
+
+  it("does not move anyone twice when the same beat is presented again", () => {
+    const changes = { aiko: { affection: 3 } };
+    const first = reduce(synced, { type: "batch/received", body: batch({ steps: [step({ step_id: "s1", relationship_changes: changes })] }) });
+    // A failed generation re-offers the decision the player is already looking at.
+    const again = reduce(first, { type: "batch/received", body: batch({
+      status: "awaiting_player", steps: [step({ step_id: "s1", type: "choice", relationship_changes: changes })],
+    }) });
+
+    expect(again.standing.aiko.relationship.affection).toBe(43);
+    expect(again.standingSeq).toBe(first.standingSeq);
+  });
+
+  it("clamps exactly as the engine does, and shows only what really changed", () => {
+    const high = reduce(playing, { type: "state/synced", characters: {
+      aiko: { ...cast.aiko, relationship: { affection: 99 } },
+    } });
+    const state = reduce(high, { type: "batch/received", body: batch({ steps: [
+      step({ step_id: "s1", relationship_changes: { aiko: { affection: 5 }, nobody: { affection: 4 } } }),
+    ] }) });
+
+    expect(state.standing.aiko.relationship.affection).toBe(100);
+    expect(state.standingDelta).toEqual({ aiko: { affection: 1 } });
+    expect(state.standing.nobody).toBeUndefined();
+  });
+
+  it("clears the flash on the next beat but keeps the value", () => {
+    const moved = reduce(synced, { type: "batch/received", body: batch({ steps: [
+      step({ step_id: "s1", relationship_changes: { aiko: { affection: 2 } } }),
+      step({ step_id: "s2" }),
+    ] }) });
+    const next = reduce(moved, { type: "advance" });
+
+    expect(next.standingDelta).toEqual({});
+    expect(next.standing.aiko.relationship.affection).toBe(42);
+  });
+
+  it("takes the engine's numbers over its own arithmetic", () => {
+    const drifted = reduce(synced, { type: "batch/received", body: batch({ steps: [
+      step({ step_id: "s1", relationship_changes: { aiko: { affection: 3 } } }),
+    ] }) });
+    const corrected = reduce(drifted, { type: "state/synced", characters: {
+      aiko: { ...cast.aiko, relationship: { affection: 51 } },
+    } });
+
+    expect(corrected.standing.aiko.relationship.affection).toBe(51);
+  });
+});

@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Protocol, runtime_checkable
 
 from app.domain.asset import AssetRecord
+from app.domain.chronicle import ChronicleEntry
 from app.domain.memory import MemoryRecord
 from app.domain.state import GameSession
 
@@ -69,6 +70,32 @@ class MemoryRepository(Protocol):
     async def purge_game(self, game_id: str) -> int:
         """Delete every memory belonging to a game. Returns how many went."""
         ...
+
+
+@runtime_checkable
+class ChronicleRepository(Protocol):
+    """The story ledger: one entry per delivered run, kept for the whole playthrough.
+
+    Two writes reach one entry and they arrive in either order, so neither overwrites
+    the other's fields: the attempt is known when the turn is accepted, the scene only
+    once the player has read it.
+    """
+
+    name: str
+
+    async def note_attempt(self, game_id: str, batch_id: str, action: str) -> None:
+        """Record what the player did to ask for this run, before it exists."""
+        ...
+
+    async def record_scene(self, entry: ChronicleEntry) -> None:
+        """Upsert a delivered run. Re-delivering the same batch must change nothing."""
+        ...
+
+    async def for_game(self, game_id: str, limit: int = 200) -> list[ChronicleEntry]:
+        """Delivered scenes, oldest first."""
+        ...
+
+    async def purge_game(self, game_id: str) -> int: ...
 
 
 @runtime_checkable

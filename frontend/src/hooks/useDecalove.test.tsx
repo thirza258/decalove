@@ -6,7 +6,7 @@ import type { StepsBatchOut, StoryStep } from "../api/types";
 import { useDecalove } from "./useDecalove";
 
 vi.mock("../api/client", () => ({ api: {
-  world: vi.fn(), newGame: vi.fn(), skipToStep: vi.fn(), stepsBatch: vi.fn(),
+  world: vi.fn(), newGame: vi.fn(), skipToStep: vi.fn(), stepsBatch: vi.fn(), gameState: vi.fn(),
   submitChoice: vi.fn(), submitAction: vi.fn(), retryGeneration: vi.fn(), lastStatus: null,
 } }));
 vi.mock("../game/opening", () => ({
@@ -32,6 +32,7 @@ beforeEach(() => {
   vi.mocked(api.submitChoice).mockResolvedValue({ game_id: "g1", batch_id: "b2", status: "queued" });
   vi.mocked(api.stepsBatch).mockResolvedValue(batch("pending"));
   vi.mocked(api.retryGeneration).mockResolvedValue({ game_id: "g1", batch_id: "retry", status: "queued" });
+  vi.mocked(api.gameState).mockResolvedValue(null);
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
@@ -63,6 +64,21 @@ describe("background web story playback", () => {
     expect(hook.result.current.state.waiting).toBe(false);
     expect(api.stepsBatch).toHaveBeenCalledTimes(2);
     expect(api.stepsBatch).toHaveBeenLastCalledWith("g1", 20, 4000, 19);
+  });
+
+  it("re-reads the engine's relationship values while the player is deciding", async () => {
+    vi.mocked(api.stepsBatch).mockResolvedValueOnce(batch("ready", [beat(20, "choice")]));
+    vi.mocked(api.gameState).mockResolvedValue({ game_id: "g1", characters: {
+      aiko: { id: "aiko", name: "Aiko", relationship: { affection: 47 }, current_emotion: "composed", met: true },
+    } } as never);
+    const hook = await handoff();
+    await poll();
+
+    expect(hook.result.current.state.deciding).toBe(true);
+    await act(async () => {});
+    // The beat's own deltas move the numbers; this is the correction behind them.
+    expect(hook.result.current.state.standing.aiko.relationship.affection).toBe(47);
+    expect(api.gameState).toHaveBeenCalledWith("g1");
   });
 
   it("keeps the story in place on AI exhaustion and retries the same game", async () => {

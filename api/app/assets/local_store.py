@@ -59,5 +59,20 @@ class LocalAssetStore:
     async def exists(self, key: str) -> bool:
         return await asyncio.to_thread(lambda: self._path(key).exists())
 
+    async def list(self, prefix: str, limit: int = 100) -> list[tuple[str, int]]:
+        def _list() -> list[tuple[str, int]]:
+            root = self._path(prefix.rstrip("/"))
+            if not root.is_dir():
+                return []
+            found = []
+            for path in sorted(root.rglob("*")):
+                if path.is_file() and not path.name.endswith(".meta"):
+                    found.append((f"{prefix.rstrip('/')}/{path.relative_to(root).as_posix()}", path.stat().st_size))
+                if len(found) >= limit:
+                    break
+            return found
+
+        return await asyncio.to_thread(_list)
+
     async def url(self, key: str) -> str | None:
         return None  # served by the API proxy route

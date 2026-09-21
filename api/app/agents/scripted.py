@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 
 from app.content.world import Character, World
 from app.domain.direction import Directive, Stance
-from app.domain.enums import RELATIONSHIP_AXES, StepType
+from app.domain.enums import Grounding, RELATIONSHIP_AXES, StepType
 from app.domain.intent import PlayerIntent
 from app.domain.state import GameSession
 from app.domain.story import (
@@ -816,9 +816,16 @@ class ScriptedNarrator:
             location = moving_to or location
 
         if intent.summary:
+            # An attempt this world cannot contain is said out loud and goes no further:
+            # restating it as narration would put the impossible thing in the story.
+            said = (
+                f"{player} says it, and the {location.in_prose} goes on being exactly what it is."
+                if intent.grounding is Grounding.off_world
+                else fill(intent.summary if intent.summary.endswith(".") else intent.summary + ".")
+            )
             restatement = self._narration(
                 location.id,
-                fill(intent.summary if intent.summary.endswith(".") else intent.summary + "."),
+                said,
                 visual_character=target.id if target else None,
                 present=present,
             )
@@ -941,8 +948,11 @@ class ScriptedNarrator:
 
         who = short if target else "the room"
         outcome = "turned it down" if rebuff else "took it well enough"
-        attempt = fill(intent.summary) if intent.summary else (
-            f"{player} {intent.action.replace('_', ' ')}"
+        attempt = (
+            f"{player} said something this place has no room for"
+            if intent.grounding is Grounding.off_world
+            else fill(intent.summary) if intent.summary
+            else f"{player} {intent.action.replace('_', ' ')}"
         )
         return GeneratedRun(steps=steps, summary=f"{attempt} — {who} {outcome}.")
 

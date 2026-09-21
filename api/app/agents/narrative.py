@@ -18,6 +18,7 @@ from app.agents.prompts import build_run_prompt, build_system_prompt
 from app.agents.scripted import ScriptedNarrator
 from app.agents.validator import Validator
 from app.content.world import World
+from app.domain.chronicle import ChronicleEntry
 from app.domain.direction import DecisionContext, DecisionKind, Directive
 from app.domain.intent import PlayerIntent
 from app.domain.memory import MemoryRecord
@@ -108,6 +109,7 @@ class NarrativeAgent:
         *,
         decision: DecisionContext | None = None,
         directive: Directive | None = None,
+        chronicle: list[ChronicleEntry] | None = None,
     ) -> RunResult:
         decision = decision or DecisionContext(kind=DecisionKind.free_text, typed=intent.raw)
         directive = directive or Directive(max_steps=self.max_steps)
@@ -116,7 +118,8 @@ class NarrativeAgent:
         for index, provider in enumerate(providers):
             try:
                 work = self._generate_with_llm(
-                    session, intent, memories, decision, directive, provider=provider
+                    session, intent, memories, decision, directive, provider=provider,
+                    chronicle=chronicle,
                 )
                 run = await asyncio.wait_for(work, timeout=self.attempt_timeout_s)
                 result = self._finish(
@@ -162,6 +165,7 @@ class NarrativeAgent:
         directive: Directive,
         *,
         provider: ChatProvider | None = None,
+        chronicle: list[ChronicleEntry] | None = None,
     ) -> GeneratedRun:
         provider = provider or self.chat
         assert provider is not None
@@ -176,6 +180,7 @@ class NarrativeAgent:
                 decision=decision,
                 directive=directive,
                 max_steps=self.max_steps,
+                chronicle=chronicle,
             ),
             schema_name="story_run",
             schema=self._schema,

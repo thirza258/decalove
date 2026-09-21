@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import pytest
 
+from app.agents.director import DirectorAgent
+from app.agents.grounding import classify
 from app.agents.memory_agent import MemoryAgent
+from app.agents.prompts import build_run_prompt
 from app.agents.visual import VisualAgent
-from app.domain.enums import Risk, StepType
+from app.domain.direction import DecisionContext, DecisionKind, Directive
+from app.domain.enums import Grounding, Risk, StepType
 from app.domain.intent import PlayerIntent
 from app.domain.story import DialogueLine, GeneratedStep, MemoryProposal, VisualSpec
 from app.llm.embeddings import HashingEmbedding
@@ -39,6 +43,101 @@ class TestDirector:
 
     def test_confession_is_high_risk(self, director, session):
         assert director.parse_keywords(session, "I confess to Aiko").risk is Risk.high
+
+
+class TestGrounding:
+    """Free text that would replace the story rather than play it.
+
+    Half of these are near-misses on purpose. Ignoring a real attempt is the same
+    derailment as honouring an impossible one, and it is the easier mistake to make.
+    """
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("I ask Aiko what the notebook is for", Grounding.in_world),
+            ("I tell her I would fight a dragon for her", Grounding.in_world),
+            ("Let's start over. That came out wrong.", Grounding.in_world),
+            ("I ask her to change the subject", Grounding.in_world),
+            ("I take out my phone and show her the photo", Grounding.in_world),
+            ("I shoot her a look", Grounding.in_world),
+            ("I am a ghost in this classroom and nobody notices", Grounding.in_world),
+            ("I fly to Tokyo over the summer", Grounding.in_world),
+            ("I summon a dragon to impress her", Grounding.off_world),
+            ("I pull out a gun", Grounding.off_world),
+            ("I use my telekinesis on the notebook", Grounding.off_world),
+            ("zombies attack the school", Grounding.off_world),
+            ("make this into a zombie apocalypse", Grounding.meta),
+            ("restart the story", Grounding.meta),
+            ("skip to the ending", Grounding.meta),
+            ("write me a poem instead", Grounding.meta),
+        ],
+    )
+    def test_only_a_strong_signal_leaves_the_world(self, text, expected):
+        assert classify(text) is expected
+
+    def test_an_instruction_to_the_game_is_absorbed_and_never_refined(self, director, session):
+        intent, refinable = director.parse_fast(session, "make this into a zombie apocalypse")
+
+        assert intent.grounding is Grounding.meta
+        assert intent.action == "observe" and intent.meaningful is False
+        assert refinable is False, "there is nothing in it for a model to parse"
+        assert intent.raw == "make this into a zombie apocalypse", "the player's words are kept"
+
+    def test_an_impossible_attempt_is_still_an_attempt(self, director, session):
+        intent, _ = director.parse_fast(session, "I summon a dragon to impress Aiko")
+
+        assert intent.grounding is Grounding.off_world
+        assert intent.meaningful is True, "the scene still answers them"
+        assert intent.target == "aiko"
+
+    async def test_the_parser_cannot_overrule_the_engine(self, world, session):
+        class Parser:
+            name = "stub"
+
+            async def complete_json(self, **kwargs):
+                # A model that decides the world can bend would bend it.
+                return {"action": "summon", "target": "aiko", "risk": "low",
+                        "summary": "Kai summons a dragon", "grounding": "in_world"}
+
+        director = DirectorAgent(world, chat=Parser())
+        assert (await director.parse(session, "I summon a dragon")).grounding is Grounding.off_world
+        # And the reverse: phrasing the patterns miss, named plainly by the model.
+        assert (await director.parse(session, "I make a portal open")).grounding is Grounding.off_world
+
+    def test_it_survives_a_save_written_before_it_existed(self):
+        old = PlayerIntent.model_validate({"action": "talk_to", "raw": "hi"})
+        assert old.grounding is Grounding.in_world
+        assert PlayerIntent.model_validate(old.model_dump(mode="json")).grounding is Grounding.in_world
+
+    def test_the_prompt_tells_the_writer_what_to_do_with_it(self, world, session):
+        def prompt(grounding):
+            return build_run_prompt(
+                world, session,
+                PlayerIntent(action="summon", raw="I summon a dragon",
+                             summary="{player} tries to summon a dragon", grounding=grounding),
+                [], history_steps=5,
+                decision=DecisionContext(kind=DecisionKind.free_text, typed="I summon a dragon"),
+                directive=Directive(max_steps=10), max_steps=10,
+            )
+
+        assert "GROUNDING" not in prompt(Grounding.in_world)
+        assert "the thing itself does not happen" in prompt(Grounding.off_world)
+        assert "instruction to the game" in prompt(Grounding.meta)
+        # The words themselves always reach the writer, whatever they were.
+        assert all('"I summon a dragon"' in prompt(g) for g in Grounding)
+
+    def test_offline_the_world_still_does_not_bend(self, narrator, session, validator):
+        """No model, no grounding note -- and no dragon either."""
+        intent = PlayerIntent(action="summon", target="aiko", raw="I summon a dragon",
+                              summary="{player} tries to summon a dragon",
+                              grounding=Grounding.off_world)
+        report = validator.validate(narrator.run(session, intent, max_steps=6), session)
+
+        prose = " ".join(step.text_body() for step in report.steps).lower()
+        assert report.steps, "the scripted narrator must still answer"
+        assert "dragon" not in prose
+        assert all(step.location in {loc.id for loc in narrator.world.locations} for step in report.steps)
 
 
 class TestScriptedNarrator:

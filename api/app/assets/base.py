@@ -19,6 +19,10 @@ class AssetStore(Protocol):
 
     async def exists(self, key: str) -> bool: ...
 
+    async def list(self, prefix: str, limit: int = 100) -> list[tuple[str, int]]:
+        """``(key, size)`` for objects under ``prefix``, for pictures put there by hand."""
+        ...
+
     async def url(self, key: str) -> str | None:
         """A directly-fetchable URL, or ``None`` if the API must proxy the bytes."""
         ...

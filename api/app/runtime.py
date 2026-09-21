@@ -33,14 +33,16 @@ from app.llm.fallback_image import FallbackImageProvider
 from app.llm.openrouter import OpenRouterChat, OpenRouterImage
 from app.llm.placeholder_image import PlaceholderImageProvider
 from app.llm.sdxl_image import SDXLImageProvider
-from app.repositories.base import AssetRepository, GameRepository, MemoryRepository
+from app.repositories.base import AssetRepository, ChronicleRepository, GameRepository, MemoryRepository
 from app.repositories.memory_repo import (
     InMemoryAssetRepository,
+    InMemoryChronicleRepository,
     InMemoryGameRepository,
     InMemoryMemoryRepository,
 )
 from app.repositories.mongo_repo import (
     MongoAssetRepository,
+    MongoChronicleRepository,
     MongoGameRepository,
     MongoMemoryRepository,
 )
@@ -62,6 +64,7 @@ class Runtime:
     world: World
     games: GameRepository
     memories: MemoryRepository
+    chronicle: ChronicleRepository
     assets_repo: AssetRepository
     store: AssetStore
     chat: ChatProvider | None
@@ -112,7 +115,7 @@ class Runtime:
 
 async def _build_persistence(
     settings: Settings,
-) -> tuple[GameRepository, MemoryRepository, AssetRepository, str]:
+) -> tuple[GameRepository, MemoryRepository, ChronicleRepository, AssetRepository, str]:
     wanted = settings.STORAGE_BACKEND
     if wanted != "memory":
         connected = await try_connect()
@@ -120,10 +123,11 @@ async def _build_persistence(
             db = get_db()
             games = MongoGameRepository(db)
             memories = MongoMemoryRepository(db)
+            chronicle = MongoChronicleRepository(db)
             assets = MongoAssetRepository(db)
-            for repository in (games, memories, assets):
+            for repository in (games, memories, chronicle, assets):
                 await repository.ensure_indexes()
-            return games, memories, assets, "mongo"
+            return games, memories, chronicle, assets, "mongo"
         if wanted == "mongo":
             raise RuntimeError(
                 "STORAGE_BACKEND=mongo but MongoDB is unreachable. "
@@ -136,6 +140,7 @@ async def _build_persistence(
     return (
         InMemoryGameRepository(),
         InMemoryMemoryRepository(),
+        InMemoryChronicleRepository(),
         InMemoryAssetRepository(),
         "memory",
     )
@@ -280,7 +285,7 @@ def _build_providers(
 
 async def build_runtime(settings: Settings) -> Runtime:
     world = get_world(None)
-    games, memories, assets_repo, storage_backend = await _build_persistence(settings)
+    games, memories, chronicle, assets_repo, storage_backend = await _build_persistence(settings)
     store, asset_backend = _build_asset_store(settings)
     chat, image, embedder = _build_providers(settings)
     fallback_chats = []
@@ -368,6 +373,7 @@ async def build_runtime(settings: Settings) -> Runtime:
         narrative=narrative,
         director=director,
         memory=memory_agent,
+        chronicle=chronicle,
         visual=visual,
         assets=asset_service,
         timeout_s=settings.GENERATION_TIMEOUT_S,
@@ -382,6 +388,7 @@ async def build_runtime(settings: Settings) -> Runtime:
         director=director,
         narrative=narrative,
         memory=memory_agent,
+        chronicle=chronicle,
         visual=visual,
         assets=asset_service,
         generation=generation,
@@ -392,6 +399,7 @@ async def build_runtime(settings: Settings) -> Runtime:
     maintenance = MaintenanceService(
         games=games,
         memories=memories,
+        chronicle=chronicle,
         generation=generation,
         game_service=game_service,
         ttl_days=settings.SESSION_TTL_DAYS,
@@ -405,6 +413,7 @@ async def build_runtime(settings: Settings) -> Runtime:
         world=world,
         games=games,
         memories=memories,
+        chronicle=chronicle,
         assets_repo=assets_repo,
         store=store,
         chat=chat,

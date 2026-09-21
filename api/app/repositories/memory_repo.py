@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from app.domain.asset import AssetRecord
+from app.domain.chronicle import ChronicleEntry
 from app.domain.memory import MemoryRecord
 from app.domain.state import GameSession
 from app.repositories.base import StaleSessionError
@@ -123,6 +124,43 @@ class InMemoryMemoryRepository:
         before = len(self._records)
         self._records = [record for record in self._records if record.game_id != game_id]
         return before - len(self._records)
+
+
+class InMemoryChronicleRepository:
+    name = "memory"
+
+    def __init__(self) -> None:
+        self._entries: dict[str, ChronicleEntry] = {}
+
+    async def note_attempt(self, game_id: str, batch_id: str, action: str) -> None:
+        key = ChronicleEntry.key(game_id, batch_id)
+        existing = self._entries.get(key)
+        if existing is None:
+            self._entries[key] = ChronicleEntry(id=key, game_id=game_id, batch_id=batch_id,
+                                                player_action=action)
+        else:
+            existing.player_action = action
+
+    async def record_scene(self, entry: ChronicleEntry) -> None:
+        existing = self._entries.get(entry.id)
+        # The attempt may have been written first, or not at all; keep whichever we have.
+        stored = entry.model_copy(deep=True)
+        if existing is not None:
+            stored.player_action = existing.player_action or entry.player_action
+            stored.created_at = existing.created_at
+        self._entries[entry.id] = stored
+
+    async def for_game(self, game_id: str, limit: int = 200) -> list[ChronicleEntry]:
+        found = [e for e in self._entries.values() if e.game_id == game_id]
+        found.sort(key=lambda entry: entry.index)
+        # The newest `limit`, still oldest first -- see the Mongo implementation.
+        return [entry.model_copy(deep=True) for entry in found[-limit:]]
+
+    async def purge_game(self, game_id: str) -> int:
+        gone = [key for key, entry in self._entries.items() if entry.game_id == game_id]
+        for key in gone:
+            del self._entries[key]
+        return len(gone)
 
 
 class InMemoryAssetRepository:

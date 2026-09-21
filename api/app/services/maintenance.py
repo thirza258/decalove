@@ -40,13 +40,15 @@ class SweepReport(BaseModel):
     scanned: int = 0
     deleted: int = 0
     memories_removed: int = 0
+    chronicle_removed: int = 0
     skipped: int = 0
     game_ids: list[str] = Field(default_factory=list)
 
     def __str__(self) -> str:  # pragma: no cover - log formatting
         return (
             f"scanned {self.scanned}, deleted {self.deleted} "
-            f"({self.memories_removed} memories), skipped {self.skipped}"
+            f"({self.memories_removed} memories, {self.chronicle_removed} scenes), "
+            f"skipped {self.skipped}"
         )
 
 
@@ -56,6 +58,7 @@ class MaintenanceService:
         *,
         games: GameRepository,
         memories: MemoryRepository,
+        chronicle,
         generation,
         game_service,
         ttl_days: int = 7,
@@ -65,6 +68,7 @@ class MaintenanceService:
     ) -> None:
         self.games = games
         self.memories = memories
+        self.chronicle = chronicle
         self.generation = generation
         self.game_service = game_service
         self.ttl = timedelta(days=ttl_days)
@@ -111,6 +115,7 @@ class MaintenanceService:
                     continue
 
                 report.memories_removed += await self.memories.purge_game(game_id)
+                report.chronicle_removed += await self.chronicle.purge_game(game_id)
                 report.deleted += 1
                 report.game_ids.append(game_id)
 

@@ -57,6 +57,40 @@ there regardless of the chosen destination; the generated response handles the m
 The final run resolves established threads with a concrete image and contains no menu.
 A romance, friendship, or solo ending can each complete the story.
 
+## When the player types something the story cannot contain
+
+Free text is the point of the game, and a player will eventually type "I summon a
+dragon" or "make this a zombie apocalypse". Neither becomes the story. The engine
+classifies a typed line before anyone writes a word of the answer:
+
+- An **impossible act** stays an attempt. The words are heard — as a joke, a boast, a
+  deflection, or a worrying thing to say — and answered in character by whoever they
+  were said to. The event does not happen, the genre does not change, and nobody
+  acquires magic. Offline, the scripted narrator stops restating the attempt.
+- An **instruction to the game** ("restart", "skip to the ending", "write me a poem")
+  is absorbed as a non-action: the scene the player is in carries on around it.
+- Everything else is an ordinary attempt, including the ones no menu offered. The
+  classifier is deliberately reluctant: "I would fight a dragon for her" is a promise
+  and "let's start over" is an apology, and treating either as a derailment is the
+  same failure in the other direction.
+
+The prompt carries the world's own boundaries as well: no supernatural, no weapons, no
+other world, and no named people outside the cast — classmates, teachers and families
+exist offscreen and unnamed, and are never promoted into characters with lines.
+
+## What the story remembers
+
+Every delivered run is written to the story ledger with the player's own words for the
+move that caused it. The prompt is given the first three scenes and the last twelve, so
+a callback in the summer arc can still reach the library in the prologue. Ground a
+callback in that record, in delivered dialogue, or in a memory — never in an invented
+past encounter.
+
+The player can see where they stand: the web client shows each character's affection
+and flashes what a beat changed. So a beat that moves somebody should carry a small
+relationship change, and a beat that does not should carry none. An unearned +1 reads
+as noise, and a real moment that moves nothing reads as though it did not count.
+
 ## Where to edit and how to evaluate
 
 `api/app/content/chapters.py` contains the shared premise, chapter questions, pressures,
@@ -65,7 +99,10 @@ Director's current brief. The scripted narrator uses the authored details and vo
 alongside its action-specific response and relationship logic.
 
 `api/tests/test_story_stability.py` checks chapter progression, all four authored voices
-across all five arcs, neutral tails, ending recovery, model timeouts and memory failures.
+across all five arcs, neutral tails, ending recovery, model timeouts, memory failures,
+and the story ledger — what it saves, what it refuses to save before delivery, and what
+the prompt falls back to without it. `TestGrounding` in `test_agents.py` holds the table
+of typed lines that must and must not be treated as leaving the story.
 The long-playthrough tests check that focused relationships still grow and finish with
 an earned partner. Tests establish the playback contract; judging live model prose still
 requires reading actual playthroughs for repetition, believable responses and callbacks.

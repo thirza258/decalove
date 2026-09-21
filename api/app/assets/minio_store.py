@@ -63,6 +63,21 @@ class MinioAssetStore:
 
         return await asyncio.to_thread(_stat)
 
+    async def list(self, prefix: str, limit: int = 100) -> list[tuple[str, int]]:
+        def _list() -> list[tuple[str, int]]:
+            found = []
+            for item in get_storage_client().list_objects(self._bucket, prefix=prefix, recursive=True):
+                if not item.object_name.endswith("/"):
+                    found.append((item.object_name, item.size or 0))
+                if len(found) >= limit:
+                    break
+            return found
+
+        try:
+            return await asyncio.to_thread(_list)
+        except S3Error as exc:
+            raise AssetStoreError(f"minio list failed for {prefix}: {exc}") from exc
+
     async def url(self, key: str) -> str | None:
         def _url() -> str | None:
             try:

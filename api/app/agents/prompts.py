@@ -7,7 +7,9 @@ system half is identical for every call in a world.
 
 from __future__ import annotations
 
+from app.agents.grounding import note as grounding_note
 from app.content.world import World
+from app.domain.chronicle import ChronicleEntry
 from app.domain.direction import DecisionContext, Directive
 from app.domain.intent import PlayerIntent
 from app.domain.memory import MemoryRecord
@@ -16,6 +18,12 @@ from app.domain.story import StoryStep
 
 #: Upper bound on how many world flags are rendered into the prompt.
 MAX_RENDERED_FLAGS = 24
+
+#: How much of the story ledger reaches the prompt. The opening scenes are what a long
+#: playthrough forgets first and what its callbacks most need, so they are kept
+#: explicitly rather than trusting a tail window to reach back far enough.
+CHRONICLE_HEAD = 3
+CHRONICLE_TAIL = 12
 
 _RULES = """HARD RULES (violating any of these invalidates the whole response)
 
@@ -49,6 +57,10 @@ OUTPUT CONTRACT
 * Every step needs a `visual`. `background` must be a location id from the list.
   `expression` must come from that character's expression list. Prioritise staying within
   the established location and characters present to maintain visual continuity and reuse scene art.
+* When a beat genuinely changes how somebody feels about the player, say so with a
+  small `relationship_changes` entry on the axis that actually moved -- and leave it
+  out of every beat that does not. The player is shown these, so an unearned +1 reads
+  as noise and a real moment that moves nothing reads as if it did not count.
 * Use `memory` sparingly: only for things a character would still be thinking about a
   week later. importance 0.0-1.0.
 * narration is prose, 1-3 sentences, present tense, close third person about the world.
@@ -58,17 +70,30 @@ OUTPUT CONTRACT
 
 SCENE CRAFT
 
-* Answer the player's actual words in the first few beats. Show a specific reaction or
-  consequence before introducing another problem. A refusal still changes the conversation.
-* Give the scene a concrete want, an obstacle, and a small turn. Use the chapter brief
-  as pressure on this conversation, not permission to ignore the player's chosen subject.
-* Reveal character through conflicting wants, habits, and subtext. Preserve each voice;
-  do not make everyone equally poetic, agreeable, or instantly vulnerable.
-* Reuse an established detail or unresolved promise when relevant. Develop it, rather
-  than repeating the last exchange. Never invent a past encounter to manufacture a callback.
+* Open on the reaction, not on a recap. The player knows what they just did; do not
+  restate it before someone responds to it. Answer their actual words in the first
+  beats, show a specific consequence, and let a refusal change the conversation too.
+* Give the scene a want, an obstacle, and a small turn. Use the chapter brief as
+  pressure on this conversation, not as permission to change the subject they chose.
+* Be specific. One real object, gesture or overheard line does more than a paragraph of
+  atmosphere: the bent corner of the notebook, the worn pen cap, the door that will not
+  stay shut. Cut any sentence that would sit equally well in somebody else's scene.
+* Let people do something while they talk -- hands, distance, what they look at instead
+  of each other. Physical business carries what the dialogue will not say.
+* Write subtext. People deflect, answer a different question, agree too quickly, or stop
+  mid-sentence. Nobody here narrates their own feelings accurately, and teenagers do not
+  talk like therapists.
+* Keep the voices apart. Vary line length and rhythm; not everyone is articulate,
+  patient or poetic, and the distance between them is the characterisation.
+* Nothing is free. Warmth costs something, help creates an obligation, and a character
+  can be glad of the player and still say no. Do not reward every response with affection.
+* Reuse an established detail or an unresolved promise and develop it, rather than
+  repeating the last exchange. Never invent a past encounter to manufacture a callback:
+  if it is not in the story so far, the recent steps or the memories, it did not happen.
+* Never summarise the scene inside the scene. No "a moment of understanding passed", no
+  shifting light and comfortable silence. Every beat adds information, pressure, or a
+  change in what somebody is willing to say.
 * Offer choices with different costs: approach, question, set a boundary, or leave room.
-  Do not reward every response with affection. Avoid filler about shifting light and
-  comfortable silence; each beat must add information, pressure, or a change of perspective.
 
 CONTENT BOUNDARIES ({rating})
 {safety}"""
@@ -142,6 +167,18 @@ VALID EXPRESSIONS
 LOCATIONS (only these ids exist)
 {locations}
 
+WHAT THIS STORY IS, AND WHAT IT NEVER BECOMES
+* A grounded, contemporary story about these people in this place. It contains no magic,
+  no supernatural, no time travel, no weapons and no other world, and it never will --
+  whoever asks, however they ask.
+* The named people are the cast above. Classmates, teachers and families exist, but
+  offscreen and unnamed; never promote one into a named character with lines of their own.
+* The player may type anything at all, and the world does not bend to it. An attempt this
+  story cannot contain is HEARD -- as a joke, a boast, a deflection, or a worrying thing
+  to say -- and answered in character by whoever it was said to. The thing itself does not
+  happen, the genre does not change, and the story never restarts or skips to its ending.
+* The STORY SO FAR is the record of what has happened. Build on it; nothing else happened.
+
 {_RULES.format(
         max_steps=max_steps,
         min_steps=min(min_steps, max_steps),
@@ -179,12 +216,36 @@ def _render_step(step: StoryStep) -> str:
     return f"    [{step.index}] {' / '.join(parts) or '(silence)'}"
 
 
+def _story_so_far(session: GameSession, chronicle: list[ChronicleEntry]) -> str:
+    """The delivered story, from the ledger when there is one.
+
+    Falls back to the session's own run summaries: an offline deployment has no
+    chronicle, and neither does a story whose first run has not been delivered yet. A
+    chronicle outage therefore degrades to the previous behaviour rather than handing
+    the writer a story with no past.
+    """
+    delivered = [entry for entry in chronicle if entry.summary or entry.player_action]
+    if not delivered:
+        return "\n".join(f"    - {_fill(line, session)}" for line in session.history[-6:]) or "    - (nothing yet)"
+    if len(delivered) <= CHRONICLE_HEAD + CHRONICLE_TAIL:
+        lines = [entry.render() for entry in delivered]
+    else:
+        skipped = len(delivered) - CHRONICLE_HEAD - CHRONICLE_TAIL
+        lines = [
+            *(entry.render() for entry in delivered[:CHRONICLE_HEAD]),
+            f"({skipped} further scenes happened between here and the next line)",
+            *(entry.render() for entry in delivered[-CHRONICLE_TAIL:]),
+        ]
+    return "\n".join(f"    - {_fill(line, session)}" for line in lines)
+
+
 def build_context(
     world: World,
     session: GameSession,
     memories: list[MemoryRecord],
     *,
     history_steps: int,
+    chronicle: list[ChronicleEntry] | None = None,
 ) -> str:
     characters = "\n".join(
         f"    - {state.describe()}"
@@ -203,10 +264,7 @@ def build_context(
     recent = session.recent_steps(history_steps)
     history = "\n".join(_render_step(step) for step in recent) or "    (the story has not started)"
 
-    arc_summary = (
-        "\n".join(f"    - {_fill(line, session)}" for line in session.history[-6:])
-        or "    - (nothing yet)"
-    )
+    arc_summary = _story_so_far(session, chronicle or [])
     # World flags are never pruned and every one of them used to be rendered: measured at
     # ~977 tokens for 20 flags and ~1,907 for 120, on every single call, forever. The
     # writer needs the recent ones; the rest are bookkeeping.
@@ -248,7 +306,7 @@ PRIVATE CHARACTER THREADS (writer reference, NOT shared knowledge)
     Never give one character another's secret. If delivered history already establishes
     a disclosure, preserve that fact even if trust has since fallen. Do not repeat a reveal.
 
-STORY SO FAR
+STORY SO FAR (scenes the player has actually read, oldest first -- these happened)
 {arc_summary}
 
 RECENT STEPS
@@ -267,6 +325,7 @@ def build_run_prompt(
     decision: DecisionContext,
     directive: Directive,
     max_steps: int,
+    chronicle: list[ChronicleEntry] | None = None,
 ) -> str:
     """The per-turn prompt.
 
@@ -283,7 +342,11 @@ def build_run_prompt(
     Two identical inputs at different relationship values therefore produce materially
     different prompts, which is what PRD §15 is asking for.
     """
-    context = build_context(world, session, memories, history_steps=history_steps)
+    context = build_context(world, session, memories, history_steps=history_steps, chronicle=chronicle)
+    # An attempt the world cannot contain still gets an answer -- but it gets one from
+    # inside the world, and the last word before "write what happens next" is the place
+    # where that is hardest to miss.
+    grounding = grounding_note(intent.grounding)
 
     return f"""{context}
 
@@ -297,7 +360,7 @@ PLAYER ACTION
     Parsed as: action={intent.action}, target={intent.target or '-'}, \
 tone={intent.emotion or '-'}, risk={intent.risk.value}
     Attempt: {_fill(intent.summary, session) if intent.summary else '(none stated)'}
-
+{f"    {grounding}" if grounding else ""}
 Write what happens next as a {max_steps}-step sequence. Respond to the player's specific
 attempt using the character stances and established facts above.
 
@@ -326,6 +389,9 @@ CONVERSATION LEADING TO THIS RESPONSE:
 
 Use this conversation to resolve references such as "her", "him", "that", or "do it".
 The player's words describe their own attempt, even when it differs from every offered option.
+This is a grounded, contemporary school story. Report the attempt as described even when
+it is impossible here -- what the world does about it is the engine's decision, not yours.
+Do not soften it into something else, and never name a target outside the cast.
 
 PLAYER TYPED:
 "{raw}"

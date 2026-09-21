@@ -6,13 +6,14 @@ overwrite a newer one -- see ``StaleSessionError``.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
-from pymongo import ASCENDING, ReturnDocument
+from pymongo import ASCENDING, DESCENDING, ReturnDocument
 from pymongo.errors import PyMongoError
 
 from app.domain.asset import AssetRecord
+from app.domain.chronicle import ChronicleEntry
 from app.domain.memory import MemoryRecord
 from app.domain.state import GameSession
 from app.repositories.base import StaleSessionError
@@ -20,6 +21,7 @@ from app.repositories.base import StaleSessionError
 GAMES = "game_sessions"
 MEMORIES = "character_memories"
 ASSETS = "generated_assets"
+CHRONICLE = "story_chronicle"
 
 
 def _dump(model: Any) -> dict[str, Any]:
@@ -144,6 +146,60 @@ class MongoMemoryRepository:
             document["id"] = document.pop("_id")
             records.append(MemoryRecord.model_validate(document))
         return records
+
+
+class MongoChronicleRepository:
+    name = "mongo"
+
+    def __init__(self, db: Any) -> None:
+        self._db = db
+
+    @property
+    def _col(self) -> Any:
+        return self._db[CHRONICLE]
+
+    async def ensure_indexes(self) -> None:
+        # Read as "this game's story in order"; that is the only query there is.
+        await self._col.create_index([("game_id", ASCENDING), ("index", ASCENDING)])
+
+    async def note_attempt(self, game_id: str, batch_id: str, action: str) -> None:
+        await self._col.update_one(
+            {"_id": ChronicleEntry.key(game_id, batch_id)},
+            {
+                "$set": {"player_action": action},
+                "$setOnInsert": {
+                    "game_id": game_id, "batch_id": batch_id,
+                    "created_at": datetime.now(timezone.utc),
+                },
+            },
+            upsert=True,
+        )
+
+    async def record_scene(self, entry: ChronicleEntry) -> None:
+        document = _dump(entry)
+        document.pop("id", None)
+        # Never $set player_action here: the attempt was written by whoever accepted the
+        # turn, and a re-delivery arriving later must not blank it.
+        created = document.pop("created_at")
+        document.pop("player_action", None)
+        await self._col.update_one(
+            {"_id": entry.id}, {"$set": document, "$setOnInsert": {"created_at": created}}, upsert=True
+        )
+
+    async def for_game(self, game_id: str, limit: int = 200) -> list[ChronicleEntry]:
+        # Newest first, then reversed: a story longer than the cap must lose its middle,
+        # never its most recent scenes, which are the ones the next prompt needs most.
+        cursor = self._col.find({"game_id": game_id}).sort("index", DESCENDING).limit(limit)
+        entries = []
+        async for document in cursor:
+            document["id"] = document.pop("_id")
+            entries.append(ChronicleEntry.model_validate(document))
+        entries.reverse()
+        return entries
+
+    async def purge_game(self, game_id: str) -> int:
+        result = await self._col.delete_many({"game_id": game_id})
+        return result.deleted_count
 
 
 class MongoAssetRepository:

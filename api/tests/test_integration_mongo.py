@@ -15,6 +15,7 @@ import pytest
 from motor.motor_asyncio import AsyncIOMotorClient
 
 from conftest import needs_mongo
+from app.domain.chronicle import ChronicleEntry
 from app.domain.memory import MemoryRecord
 from app.domain.asset import AssetRecord
 from app.domain.state import CharacterState, GameSession, PlayerProfile, WorldState
@@ -22,6 +23,7 @@ from app.domain.story import GeneratedStep, RelationshipDelta, StoryStep
 from app.repositories.base import StaleSessionError
 from app.repositories.mongo_repo import (
     MongoAssetRepository,
+    MongoChronicleRepository,
     MongoGameRepository,
     MongoMemoryRepository,
 )
@@ -371,3 +373,70 @@ class TestGarbageCollectionQueries:
         assert not any(
             "expireAfterSeconds" in spec for spec in indexes.values()
         ), "a TTL index would delete sessions without cascading to their memories"
+
+
+class TestChronicle:
+    """The story ledger, against real update semantics.
+
+    Two writes reach one entry from two different moments in the turn, and the order
+    is not guaranteed: the scene can be delivered before or after the note of what the
+    player did to ask for it. Neither may erase the other's fields, and re-delivery
+    must be a no-op -- none of which a hand-rolled fake would actually be testing.
+    """
+
+    @staticmethod
+    def scene(game_id: str, batch_id: str = "b1", *, index: int = 0, summary: str = "It rained.") -> ChronicleEntry:
+        return ChronicleEntry(
+            id=ChronicleEntry.key(game_id, batch_id), game_id=game_id, batch_id=batch_id,
+            index=index, last_index=index + 3, arc="prologue", day=1, location="library",
+            participants=["aiko"], summary=summary, beats=["Rain on the high windows."],
+        )
+
+    @pytest.fixture
+    async def chronicle(self, db):
+        repository = MongoChronicleRepository(db)
+        await repository.ensure_indexes()
+        return repository
+
+    @pytest.mark.parametrize("attempt_first", [True, False])
+    async def test_the_attempt_and_the_scene_compose_in_either_order(self, chronicle, attempt_first):
+        game_id = uuid.uuid4().hex
+        writes = [
+            lambda: chronicle.note_attempt(game_id, "b1", 'Kai: "I ask about the notebook"'),
+            lambda: chronicle.record_scene(self.scene(game_id)),
+        ]
+        for write in writes if attempt_first else reversed(writes):
+            await write()
+
+        (entry,) = await chronicle.for_game(game_id)
+        assert entry.player_action == 'Kai: "I ask about the notebook"'
+        assert entry.summary == "It rained." and entry.beats == ["Rain on the high windows."]
+        assert entry.arc == "prologue" and entry.last_index == 3
+
+    async def test_re_delivery_rewrites_one_entry_and_keeps_the_attempt(self, chronicle):
+        game_id = uuid.uuid4().hex
+        await chronicle.note_attempt(game_id, "b1", "Kai stayed quiet")
+        await chronicle.record_scene(self.scene(game_id))
+        await chronicle.record_scene(self.scene(game_id, summary="It rained, and she noticed."))
+
+        entries = await chronicle.for_game(game_id)
+        assert len(entries) == 1
+        assert entries[0].summary == "It rained, and she noticed."
+        assert entries[0].player_action == "Kai stayed quiet"
+
+    async def test_a_capped_read_keeps_the_most_recent_scenes_in_order(self, chronicle):
+        game_id = uuid.uuid4().hex
+        for index in range(6):
+            await chronicle.record_scene(self.scene(game_id, f"b{index}", index=index, summary=f"Scene {index}"))
+
+        entries = await chronicle.for_game(game_id, limit=3)
+        assert [entry.summary for entry in entries] == ["Scene 3", "Scene 4", "Scene 5"]
+
+    async def test_a_purge_takes_one_game_and_leaves_the_other(self, chronicle):
+        mine, theirs = uuid.uuid4().hex, uuid.uuid4().hex
+        await chronicle.record_scene(self.scene(mine))
+        await chronicle.record_scene(self.scene(theirs))
+
+        assert await chronicle.purge_game(mine) == 1
+        assert await chronicle.for_game(mine) == []
+        assert len(await chronicle.for_game(theirs)) == 1

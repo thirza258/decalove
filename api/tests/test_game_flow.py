@@ -607,7 +607,8 @@ class TestSpeculativeCache:
         from app.services.generation import GenerationService
 
         return GenerationService(
-            games=None, narrative=None, director=None, memory=None, visual=None, assets=None
+            games=None, narrative=None, director=None, memory=None, chronicle=None,
+            visual=None, assets=None
         )
 
     def test_choosing_a_branch_discards_its_siblings(self):

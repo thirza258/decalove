@@ -15,6 +15,7 @@ api/           FastAPI engine - director, narrative, validator, memory, images
 docs/PRD.md    the product spec
 docs/ARCHITECTURE.md   how it is built, and every place it departs from the spec
 docs/STORY.md  the chapter structure, character threads and writing standards
+docs/IMAGES.md the object-store folder layout for art, and how to upload into it
 ```
 
 The story follows a newcomer helping Class 2-B find its place through **A Place for Us**,
@@ -139,6 +140,18 @@ The main guarantees:
 **The engine owns the state.** The model *proposes* relationship changes, flags and
 memories; the backend validates, clamps and commits them — and only when a step is
 actually delivered to the player. A generated run nobody read has changed nothing.
+
+**Typed input plays the story; it never replaces it.** Free text is the point of the
+game, so the engine classifies a typed line before anything is written: an act the
+world cannot contain is *heard* rather than enacted, and an instruction to the game
+("restart", "make this a zombie apocalypse") is absorbed as a non-action. Ordinary
+attempts — including every one no menu offered — go through untouched.
+
+**The story keeps a ledger.** Every delivered run is saved with the player's own words
+for the move that caused it, and the prompt is given the first three scenes and the
+last twelve — so a callback in the summer arc can still reach the prologue instead of
+quietly forgetting it. The web client shows where you stand with everyone and flashes
+what each beat changed.
 
 **Choices divide consequences from anticipation.** A normal batch has up to 20 beats
 and one decision, requested at steps 10–15. Any remaining beats stay in the same scene

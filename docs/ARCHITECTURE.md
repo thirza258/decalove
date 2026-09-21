@@ -295,9 +295,30 @@ in the prompt:
 | Kind | What the writer is told |
 |---|---|
 | `choice` | the line they picked **and the ones they declined** — "they passed on X and Y"; the roads not taken may register as absence, but are never narrated |
-| `free_text` | their exact words, plus an instruction to honour their specifics rather than smoothing them into a generic beat; flagged separately when options were on offer and they wrote their own anyway |
+| `free_text` | their exact words, plus an instruction to honour their specifics rather than smoothing them into a generic beat; flagged separately when options were on offer and they wrote their own anyway, and carrying the grounding below |
 | `auto` | nobody acted (the queue ran dry, or chatter); keep it small, introduce nothing, hand control straight back |
 | `opening` | establish the place and the people |
+
+### Free text that would leave the story
+
+Honouring the player's exact words is the right instruction until the words are
+"make this a zombie apocalypse". The prompt has no way to tell those apart, so
+`agents/grounding.py` classifies the typed line **once, in the engine**, when the turn
+is accepted — deterministically, and carried on the intent from there, so a retry
+replays the same reading of the same words (a retry must never mean a different story).
+
+| Grounding | What it is | What the engine does |
+|---|---|---|
+| `in_world` | an ordinary attempt | nothing; the default |
+| `off_world` | an act the setting cannot contain | the attempt stands, and the prompt says the words are *heard*, never enacted: no magic, no weapons, no new genre. Offline, the scripted narrator stops restating the attempt as narration |
+| `meta` | an instruction to the game, not a move in it | absorbed as a non-action, like a prompt injection: the words are kept, nothing is attempted, and no model is asked to refine it |
+
+The classifier is deliberately biased toward `in_world`, because ignoring a real
+attempt is the same derailment from the other side. "I'd fight a dragon for her" is a
+promise, "let's start over" is an apology, and "I shoot her a look" is a look — so a
+classification needs an actor and a verb, never a noun on its own. The intent model may
+name the attempt but never its grounding: a parser that decides the world can bend will
+bend it, so the field is stripped from its reply and the engine's own reading re-applied.
 
 ### The Director plans; the model writes
 
@@ -554,6 +575,29 @@ The design bias is to **contain** rather than punish:
   focus has no history), and the sparse hashed vectors produce small absolute cosines
   (0.05–0.30), so raw scores are **rescaled against the candidate pool** — otherwise
   importance and recency would drown relevance entirely.
+
+### The story ledger (`story_chronicle`)
+
+Memories answer "what would Aiko still be thinking about?". Nothing answered "what has
+happened in this story?": the prompt rendered `session.history[-6:]`, so by the festival
+arc the prologue was gone and callbacks had nothing to reach for. A 300-step playthrough
+forgot its own beginning.
+
+The chronicle is one entry per **delivered** run — where it happened, what the player
+typed or chose to reach it, the prose they actually read, and a digest built from that
+prose rather than from the model's own account of it. Two writes reach one entry and
+arrive in either order, so neither overwrites the other's fields: the attempt is known
+when the turn is accepted, the scene only once it has been read. Undelivered buffered
+beats are never written — an offered option is a possibility, not an event.
+
+What reaches the prompt is the **first three scenes and the last twelve**, with the
+elided middle counted in one line. The opening is what a long story forgets first and
+what its callbacks most need, so it is kept explicitly rather than trusted to a tail
+window. A chronicle that is slow, down, or simply empty falls back to
+`session.history` — the previous behaviour — because context is worth a turn's latency
+and never worth the turn.
+
+Purged with the game, like memories (§13).
 
 ---
 

@@ -54,14 +54,14 @@ class TestPersistenceSelection:
             return True
 
         monkeypatch.setattr("app.runtime.try_connect", probe)
-        games, _, _, backend = await _build_persistence(settings(STORAGE_BACKEND="memory"))
+        games, _, _, _, backend = await _build_persistence(settings(STORAGE_BACKEND="memory"))
 
         assert backend == "memory"
         assert isinstance(games, InMemoryGameRepository)
         assert probed == [], "STORAGE_BACKEND=memory should not touch MongoDB at all"
 
     async def test_auto_falls_back_when_mongo_is_unreachable(self, mongo_down):
-        _, _, _, backend = await _build_persistence(settings(STORAGE_BACKEND="auto"))
+        _, _, _, _, backend = await _build_persistence(settings(STORAGE_BACKEND="auto"))
         assert backend == "memory"
 
     async def test_requiring_mongo_fails_loudly_rather_than_losing_saves(self, mongo_down):

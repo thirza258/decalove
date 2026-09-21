@@ -99,3 +99,31 @@ body {
 .vn-dissolve {
   animation: vn-dissolve 400ms ease-out;
 }
+
+/* What the last beat changed: visible long enough to read, gone before it nags. */
+@keyframes vn-standing-delta {
+  0% {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+  12%,
+  70% {
+    opacity: 1;
+    transform: none;
+  }
+  100% {
+    opacity: 0;
+    transform: none;
+  }
+}
+
+.vn-standing-delta {
+  animation: vn-standing-delta 4.5s ease-out forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vn-standing-delta {
+    animation-duration: 4.5s;
+    animation-timing-function: step-end;
+  }
+}
