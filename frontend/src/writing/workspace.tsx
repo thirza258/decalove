@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { API_BASE, API_PREFIX } from "../config";
-import { isDocument, newDocument } from "./model";
-import type { Library, WritingDocument } from "./model";
+import { IMAGE_TYPES, MAX_IMAGE_BYTES, isDocument, newDocument } from "./model";
+import type { BlockImage, Library, WritingDocument } from "./model";
 import { WorkspaceContext } from "./workspaceContext";
 
 export interface CourseProgress { completed: string[]; exercises: Record<string, string> }
@@ -19,6 +19,11 @@ export interface WorkspaceContextValue {
   retry: () => void;
   reload: () => void;
   exportDocument: (doc: WritingDocument, format: "txt" | "json") => Promise<string>;
+  /** Stores a picture beside the game's own art and returns what a passage keeps. */
+  uploadImage: (file: File, alt: string) => Promise<BlockImage>;
+  /** Uses a picture an operator put in the object store by hand — see docs/IMAGES.md. */
+  adoptImage: (key: string, alt: string) => Promise<BlockImage>;
+  imageUrl: (imageId: string) => string;
 }
 
 export const WORKSPACE_CACHE = "decalove.workspace.v1";
@@ -52,12 +57,13 @@ class StorageError extends Error {
   constructor(message: string, status: number) { super(message); this.status = status; }
 }
 
-async function storageRequest(path: string, method = "POST", payload?: unknown, signal?: AbortSignal): Promise<Response> {
+async function storageRequest(path: string, method = "POST", payload?: unknown,
+                              signal?: AbortSignal, deadline = 20000): Promise<Response> {
   const controller = new AbortController();
   const abort = () => controller.abort();
   signal?.addEventListener("abort", abort, { once: true });
   if (signal?.aborted) controller.abort();
-  const timer = setTimeout(abort, 20000);
+  const timer = setTimeout(abort, deadline);
   try {
     const response = await fetch(`${API_BASE}${API_PREFIX}/writing/workspaces/${path}`, {
       method, signal: controller.signal,
@@ -77,6 +83,16 @@ async function storageRequest(path: string, method = "POST", payload?: unknown, 
     clearTimeout(timer);
     signal?.removeEventListener("abort", abort);
   }
+}
+
+/** Chunked so a five-megabyte picture cannot overflow the argument stack. */
+async function encodeBase64(file: File): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += 8192) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + 8192));
+  }
+  return btoa(binary);
 }
 
 export function WritingWorkspaceProvider({ children }: { children: ReactNode }) {
@@ -179,12 +195,33 @@ export function WritingWorkspaceProvider({ children }: { children: ReactNode }) 
     timer.current = setTimeout(() => void flush(), 650);
   }
 
+  async function uploadImage(file: File, alt: string): Promise<BlockImage> {
+    if (!IMAGE_TYPES.includes(file.type)) throw new Error("Insert a PNG, JPEG, WebP or GIF picture.");
+    if (file.size > MAX_IMAGE_BYTES) throw new Error("Pictures are up to 5 MB. Export a smaller copy and insert that.");
+    // A picture takes longer to hand over than a draft does, and it is sent once.
+    const response = await storageRequest(`${live.current.id}/images`, "POST",
+      { content_type: file.type, data: await encodeBase64(file), alt }, undefined, 45000);
+    const saved = await response.json() as { id: string };
+    return { id: saved.id, alt, width: 100 };
+  }
+
+  async function adoptImage(key: string, alt: string): Promise<BlockImage> {
+    const response = await storageRequest(`${live.current.id}/images/library`, "POST", { key });
+    const saved = await response.json() as { id: string; alt: string };
+    return { id: saved.id, alt: (alt || saved.alt || "").slice(0, 300), width: 100 };
+  }
+
+  function imageUrl(imageId: string) {
+    return `${API_BASE}${API_PREFIX}/writing/workspaces/${initial.id}/images/${imageId}`;
+  }
+
   async function exportDocument(doc: WritingDocument, format: "txt" | "json") {
     const metadata = await (await storageRequest(`${live.current.id}/files`, "POST", { document: doc, format })).json() as { id: string };
     return (await storageRequest(`${live.current.id}/files/${metadata.id}`, "GET")).text();
   }
 
-  const value: WorkspaceContextValue = { id: initial.id, data, status, error, temporary, update, retry: () => { void connect(); },
+  const value: WorkspaceContextValue = { id: initial.id, data, status, error, temporary, update,
+    uploadImage, adoptImage, imageUrl, retry: () => { void connect(); },
     reload: () => { if (window.confirm("Load the server version and discard unsaved changes in this tab? Download a recovery copy first if you need to keep them.")) void connect(undefined, true); }, exportDocument };
   return <WorkspaceContext.Provider value={value}>{ready ? children : <div className="writing-app writing-loading" role="status">Opening your saved writing room…</div>}</WorkspaceContext.Provider>;
 }

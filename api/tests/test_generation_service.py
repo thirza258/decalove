@@ -27,6 +27,7 @@ from app.llm.embeddings import HashingEmbedding
 from app.llm.placeholder_image import PlaceholderImageProvider
 from app.repositories.memory_repo import (
     InMemoryAssetRepository,
+    InMemoryChronicleRepository,
     InMemoryGameRepository,
     InMemoryMemoryRepository,
 )
@@ -44,6 +45,7 @@ class Engine:
     def __init__(self, world, tmp_path, *, images=False, speculative=0, chat=None):
         self.games = InMemoryGameRepository()
         self.memories = InMemoryMemoryRepository()
+        self.chronicle = InMemoryChronicleRepository()
         self.assets_repo = InMemoryAssetRepository()
 
         validator = Validator(world=world, safety=SafetyFilter(), max_delta=5, max_steps=10)
@@ -62,6 +64,7 @@ class Engine:
             narrative=self.narrative,
             director=DirectorAgent(world),
             memory=self.memory,
+            chronicle=self.chronicle,
             visual=self.visual,
             assets=self.assets,
             timeout_s=5.0,
@@ -73,6 +76,7 @@ class Engine:
             director=DirectorAgent(world),
             narrative=self.narrative,
             memory=self.memory,
+            chronicle=self.chronicle,
             visual=self.visual,
             assets=self.assets,
             generation=self.generation,

@@ -19,6 +19,7 @@ import {
   SetupScreen,
   TitleScreen,
 } from "./components/Screens";
+import { RelationshipStatus } from "./components/RelationshipStatus";
 import { Stage } from "./components/Stage";
 import { StageFrame } from "./components/StageFrame";
 import { useDecalove } from "./hooks/useDecalove";
@@ -163,6 +164,12 @@ function GamePlayer({ onHome }: { onHome: () => void }) {
       {/* The whole stage is the advance target, as clicking anywhere is in Ren'Py. */}
       <div className="absolute inset-0 cursor-pointer" onClick={onStageClick}>
         <Stage step={state.current} world={state.world} />
+        <RelationshipStatus
+          standing={state.standing}
+          delta={state.standingDelta}
+          world={state.world}
+          seq={state.standingSeq}
+        />
         <DialogueBox
           speaker={line.speaker}
           speakerColor={line.color}

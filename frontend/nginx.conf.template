@@ -124,9 +124,11 @@ server {
         add_header Cache-Control "public, max-age=31536000, immutable" always;
     }
 
-    # Generated art, if any has been baked in or mounted. A miss is ordinary: the client
-    # falls back to the palette gradient (PRD §26), so this must not reach the SPA
-    # fallback and answer a missing PNG with index.html.
+    # Art baked into the image, if a build chose to. Deployments serve their pictures
+    # from MinIO through the API instead (docs/IMAGES.md), so this normally answers
+    # nothing at all. A miss is ordinary: the client falls back to the palette gradient
+    # (PRD §26), so this must not reach the SPA fallback and answer a missing PNG with
+    # index.html.
     location /images/ {
         try_files $uri =404;
     }

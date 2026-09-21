@@ -11,6 +11,7 @@ from app.main import _ProbeFilter
 from app.agents.memory_agent import MemoryAgent
 from app.agents.narrative import NarrativeAgent
 from app.agents.prompts import build_context, build_run_prompt, build_system_prompt
+from app.domain.chronicle import ChronicleEntry
 from app.domain.direction import Directive
 from app.domain.enums import StepType
 from app.domain.intent import PlayerIntent
@@ -18,7 +19,8 @@ from app.domain.story import GeneratedRun, GeneratedStep, MemoryProposal, Relati
 from app.llm.embeddings import HashingEmbedding
 from app.repositories.base import StaleSessionError
 from app.repositories.memory_repo import InMemoryMemoryRepository
-from test_generation_service import Engine, INTENT, TYPED
+from app.repositories.mongo_repo import MongoChronicleRepository
+from test_generation_service import Engine, INTENT, TYPED, engine  # noqa: F401 - fixture
 from test_llm_path import StubChat, step as llm_step, choice_step as llm_choice
 
 
@@ -386,3 +388,116 @@ def test_the_core_requirements_declare_what_sprite_cutout_needs():
     """
     core = _directives(API_DIR / "requirements.txt").lower()
     assert "pillow" in core and "numpy" in core
+
+
+class TestStoryChronicle:
+    """The ledger of delivered scenes: what keeps a long story from forgetting itself."""
+
+    async def test_it_saves_what_the_player_read_and_what_they_typed_to_cause_it(self, engine):
+        await engine.service.submit_action("g1", "I ask Aiko what the notebook is for")
+        await engine.generation.drain()
+
+        # Half a run delivered: the ledger holds the half that was read, and nothing else.
+        await engine.service.next_batch("g1", limit=3)
+        partial = await engine.chronicle.for_game("g1")
+        assert len(partial) == 1
+        assert partial[0].player_action == 'Kai: "I ask Aiko what the notebook is for"'
+        assert 0 < len(partial[0].beats) <= 3
+        assert partial[0].summary
+
+        await engine.service.next_batch("g1", limit=20)
+        full = await engine.chronicle.for_game("g1")
+        assert len(full) == 1, "one run is one scene, however many deliveries it took"
+        assert len(full[0].beats) > len(partial[0].beats)
+        assert full[0].player_action == partial[0].player_action
+        session = await engine.games.get("g1")
+        assert full[0].last_index == session.cursor
+        assert full[0].arc == session.world.arc
+
+    async def test_a_scene_is_only_written_once_however_often_it_is_delivered(self, engine):
+        await engine.service.submit_action("g1", "I stay quiet")
+        await engine.generation.drain()
+        await engine.service.next_batch("g1", limit=20)
+        before = await engine.chronicle.for_game("g1")
+
+        # Re-delivery (a replaying client, a retried request) must change nothing.
+        await engine.service.next_batch("g1", limit=20, after_index=0)
+        after = await engine.chronicle.for_game("g1")
+        assert len(after) == len(before) == 1
+        assert after[0].beats == before[0].beats
+
+    async def test_a_ledger_outage_costs_context_and_never_a_beat(self, engine, monkeypatch, caplog):
+        async def unavailable(*args, **kwargs):
+            raise RuntimeError("chronicle down")
+
+        monkeypatch.setattr(engine.chronicle, "record_scene", unavailable)
+        monkeypatch.setattr(engine.chronicle, "note_attempt", unavailable)
+        monkeypatch.setattr(engine.chronicle, "for_game", unavailable)
+
+        with caplog.at_level(logging.WARNING):
+            await engine.service.submit_action("g1", "I offer to help")
+            await engine.generation.drain()
+            delivered = await engine.service.next_batch("g1", limit=20)
+
+        assert delivered.status == "ready" and delivered.steps
+        session = await engine.games.get("g1")
+        assert session.history, "the session's own summaries are what the prompt falls back to"
+
+    def test_the_prompt_keeps_the_beginning_of_a_long_story(self, world, session):
+        session.history = ["only the last few runs ever reached the prompt"]
+        chronicle = [
+            ChronicleEntry(
+                id=f"g1:b{index}", game_id="g1", batch_id=f"b{index}", index=index,
+                arc="prologue" if index < 3 else "festival", day=index + 1,
+                location="library", summary=f"Scene {index}",
+            )
+            for index in range(25)
+        ]
+        context = build_context(world, session, [], history_steps=5, chronicle=chronicle)
+
+        # The opening is what a long playthrough forgets first, and what its callbacks need.
+        assert "Scene 0" in context and "Scene 2" in context
+        assert "Scene 24" in context and "Scene 13" in context
+        assert "Scene 8" not in context
+        assert "10 further scenes happened" in context
+        assert "only the last few runs" not in context
+
+    async def test_the_two_mongo_writes_cannot_clobber_each_other(self):
+        """The ordering property the Mongo repository depends on, checked without one.
+
+        ``test_integration_mongo.py`` proves this against real update semantics and
+        skips when no server is running -- which is most of the time. What can always
+        be checked is the shape of the two writes: if their ``$set`` documents ever
+        overlap, whichever lands second erases the other half of the entry.
+        """
+        class Collection:
+            def __init__(self):
+                self.writes = []
+
+            async def update_one(self, where, update, upsert=False):
+                self.writes.append((where, update, upsert))
+
+        collection = Collection()
+        repository = MongoChronicleRepository({"story_chronicle": collection})
+        await repository.note_attempt("g1", "b1", 'Kai: "I ask about the notebook"')
+        await repository.record_scene(ChronicleEntry(
+            id="g1:b1", game_id="g1", batch_id="b1", index=4, summary="It rained.",
+            beats=["Rain on the high windows."], player_action="(not this one)",
+        ))
+
+        (attempt_where, attempt, attempt_upsert), (scene_where, scene, scene_upsert) = collection.writes
+        assert attempt_where == scene_where == {"_id": "g1:b1"}
+        assert attempt_upsert and scene_upsert
+        assert set(attempt["$set"]) == {"player_action"}
+        assert "player_action" not in scene["$set"], "delivery would erase what the player typed"
+        assert not set(attempt["$set"]) & set(scene["$set"])
+        # created_at belongs to whichever write arrives first, and to neither after that.
+        assert "created_at" not in attempt["$set"] and "created_at" not in scene["$set"]
+        assert "created_at" in attempt["$setOnInsert"] and "created_at" in scene["$setOnInsert"]
+
+    def test_without_a_ledger_the_prompt_still_has_the_story_it_always_had(self, world, session):
+        session.history = ["Kai walked Aiko home."]
+        assert "Kai walked Aiko home." in build_context(world, session, [], history_steps=5)
+        assert "Kai walked Aiko home." in build_context(
+            world, session, [], history_steps=5, chronicle=[]
+        )

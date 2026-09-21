@@ -1,19 +1,21 @@
 import { useEffect, useRef, useState } from "react";
-import { requestWriting, writingStatus } from "../writing/api";
+import { requestWriting } from "../writing/api";
 import { toRequest } from "../writing/model";
 import type { WritingAction, WritingBlock, WritingDocument, WritingRequest, WritingSuggestion } from "../writing/model";
 
 interface Attempt { request: WritingRequest; original: WritingBlock | null }
 interface Props {
   doc: WritingDocument;
+  /** Availability is checked once for the whole studio; the storyboard needs it too. */
+  status: "checking" | "ready" | "unavailable";
+  onStatus: (status: "checking" | "ready" | "unavailable") => void;
   selectedId: string | null;
   onEdit: (patch: Partial<WritingDocument>, group?: string) => void;
   onInsert: (blocks: WritingSuggestion["blocks"], original: WritingBlock | null) => string | null;
 }
 
-export function WritingAssistant({ doc, selectedId, onEdit, onInsert }: Props) {
+export function WritingAssistant({ doc, status, onStatus, selectedId, onEdit, onInsert }: Props) {
   const [action, setAction] = useState<WritingAction>("starter");
-  const [status, setStatus] = useState<"checking" | "ready" | "unavailable">("checking");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -28,13 +30,7 @@ export function WritingAssistant({ doc, selectedId, onEdit, onInsert }: Props) {
 
   useEffect(() => {
     const requests = pending.current;
-    const check = new AbortController();
-    const timeout = setTimeout(() => check.abort(), 5000);
-    let active = true;
-    void writingStatus(check.signal).then((available) => {
-      if (active) setStatus(available ? "ready" : "unavailable");
-    }).catch(() => { if (active) setStatus("unavailable"); }).finally(() => clearTimeout(timeout));
-    return () => { active = false; check.abort(); clearTimeout(timeout); requests.controller?.abort(); requests.sequence++; };
+    return () => { requests.controller?.abort(); requests.sequence++; };
   }, []);
 
   async function generate(retry?: Attempt) {
@@ -55,7 +51,7 @@ export function WritingAssistant({ doc, selectedId, onEdit, onInsert }: Props) {
     try {
       const response = await requestWriting(snapshot.request, abort.signal);
       if (pending.current.sequence !== requestId) return;
-      setSuggestion(response); setStatus("ready");
+      setSuggestion(response); onStatus("ready");
     } catch (failure) {
       if (pending.current.sequence !== requestId) return;
       setError(timedOut ? "The writing request timed out. Your draft is safe. Retry when ready."
@@ -90,12 +86,13 @@ export function WritingAssistant({ doc, selectedId, onEdit, onInsert }: Props) {
         <option value="dialogue">Write a conversation</option><option value="narrate">Add narration</option><option value="rewrite">Rewrite selected passage</option>
       </select>
       {counted && <div className="dialogue-target"><div><label htmlFor="dialogue-target">Dialogue lines</label><small>With narration between exchanges</small></div><select id="dialogue-target" value={doc.dialogueCount} onChange={(e) => onEdit({ dialogueCount: Number(e.target.value) })}>{[10, 25, 50, 75, 100].map((n) => <option value={n} key={n}>{n}</option>)}{![10, 25, 50, 75, 100].includes(doc.dialogueCount) && <option value={doc.dialogueCount}>{doc.dialogueCount}</option>}</select></div>}
-      {action === "rewrite" && <p className="selection-note">{selected?.text.trim() ? `Selected: ${selected.text.slice(0, 110)}${selected.text.length > 110 ? "…" : ""}` : "Click a passage in the document to select it."}</p>}
+      {action === "rewrite" && <p className="selection-note">{selected?.kind === "image" ? "An illustration cannot be rewritten. Select a written passage."
+        : selected?.text.trim() ? `Selected: ${selected.text.slice(0, 110)}${selected.text.length > 110 ? "…" : ""}` : "Click a passage in the document to select it."}</p>}
       <label htmlFor="writing-prompt">Your instructions</label>
       <textarea id="writing-prompt" value={doc.prompt} maxLength={4000} rows={5} placeholder="Two old friends meet again. Keep the tension quiet. Let what they don't say matter…" onChange={(e) => onEdit({ prompt: e.target.value }, "prompt")} />
       <div className="context-note"><span aria-hidden="true">◎</span><p>Uses your current draft, story brief, characters, and reference notes. Add any details you want it to preserve.</p></div>
       <div className="assistant-actions">
-        <button className="writing-button primary" onClick={() => void generate()} disabled={busy || (action === "rewrite" && !selected?.text.trim())}>{busy ? "Writing your suggestion…" : "✳ Generate suggestion"}</button>
+        <button className="writing-button primary" onClick={() => void generate()} disabled={busy || (action === "rewrite" && (!selected?.text.trim() || selected.kind === "image"))}>{busy ? "Writing your suggestion…" : "✳ Generate suggestion"}</button>
         {busy && <button className="text-button" onClick={cancel}>Cancel request</button>}
       </div>
       {busy && <p className="panel-help" role="status">You can keep editing while your suggestion is prepared. A full scene can take a minute or two.</p>}

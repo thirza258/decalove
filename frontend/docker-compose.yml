@@ -19,6 +19,9 @@
 ##   - DECALOVE_API_PREFIX: API route prefix (default: /api/v1).
 ##   - DECALOVE_PORT: Internal port nginx listens on (default: 80).
 ##
+## Backgrounds and character sprites are served by the API from MinIO. See
+## docs/IMAGES.md for the folder layout and how to upload pictures into it.
+##
 ## Values can be set in frontend/.env or as environment variables.
 ## For the full stack (MongoDB, MinIO, Redis, API, and workers), run ./deploy.sh
 ## from the repository root or use api/docker-compose.yml.
@@ -44,6 +47,6 @@ services:
       DECALOVE_PORT: "${DECALOVE_PORT:-80}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    volumes:
-      - ./public/images:/usr/share/nginx/html/images:ro
+    # Art comes from the API's object store, not from this container -- see
+    # docs/IMAGES.md for the MinIO folder layout and how to upload into it.
     restart: unless-stopped

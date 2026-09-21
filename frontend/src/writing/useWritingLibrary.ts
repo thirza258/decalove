@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { newDocument } from "./model";
+import { newDocument, normalizeDocument } from "./model";
 import type { Library, WritingDocument, WritingFormat } from "./model";
 import { useWritingWorkspace } from "./workspaceContext";
 
@@ -8,7 +8,8 @@ export function useWritingLibrary() {
   const library = workspace.data.library;
   const [history, setHistory] = useState<{ past: WritingDocument[]; future: WritingDocument[] }>({ past: [], future: [] });
   const lastGroup = useRef("");
-  const doc = library.documents.find((d) => d.id === library.activeId)!;
+  // Normalised here so every editor, panel and board can read the newer fields.
+  const doc = normalizeDocument(library.documents.find((d) => d.id === library.activeId)!);
 
   function save(next: Library) {
     workspace.update((data) => ({ ...data, library: next }));

@@ -17,6 +17,7 @@ from app.agents.memory_agent import MemoryAgent
 from app.agents.narrative import NarrativeAgent
 from app.agents.visual import VisualAgent
 from app.content.world import World
+from app.domain.chronicle import MAX_ACTION_CHARS, ChronicleEntry
 from app.domain.direction import DecisionContext, DecisionKind
 from app.domain.enums import TIMES_OF_DAY, WEEKDAYS, BatchStatus, StepType
 from app.domain.intent import PlayerIntent
@@ -30,7 +31,7 @@ from app.domain.state import (
 )
 from app.domain.story import StoryStep
 from app.models.game import GameStateOut, NextStepOut, StepsBatchOut
-from app.repositories.base import GameRepository
+from app.repositories.base import ChronicleRepository, GameRepository
 from app.services.asset_service import AssetService
 from app.services.generation import GenerationService
 
@@ -56,6 +57,7 @@ class GameService:
         director: DirectorAgent,
         narrative: NarrativeAgent,
         memory: MemoryAgent,
+        chronicle: ChronicleRepository,
         visual: VisualAgent,
         assets: AssetService,
         generation: GenerationService,
@@ -67,6 +69,7 @@ class GameService:
         self.director = director
         self.narrative = narrative
         self.memory = memory
+        self.chronicle = chronicle
         self.visual = visual
         self.assets = assets
         self.generation = generation
@@ -167,6 +170,7 @@ class GameService:
                 await self.games.save(session)
                 for step in skipped:
                     await self._remember_step(session, step)
+                await self._chronicle_scene(session, skipped)
             return session
 
     # -- playback ------------------------------------------------------------------------
@@ -260,6 +264,7 @@ class GameService:
             session.played()
             await self.games.save(session)
             await self._remember_step(session, step)
+            await self._chronicle_scene(session, [step])
             return NextStepOut(status="ready", step=step, queue_depth=session.queue_depth)
 
     async def next_batch(self, game_id: str, limit: int = 20, wait_ms: int = 0, after_index: int | None = None) -> StepsBatchOut:
@@ -350,6 +355,7 @@ class GameService:
             await self.games.save(session)
             for step in delivered:
                 await self._remember_step(session, step)
+            await self._chronicle_scene(session, delivered)
             return StepsBatchOut(status="ready", steps=delivered, queue_depth=session.queue_depth)
 
     def _decision_step(self, session: GameSession) -> StoryStep | None:
@@ -471,6 +477,47 @@ class GameService:
                 # memory index must not withhold the beat or its relationship changes.
                 log.warning("memory indexing failed for %s at step %s", session.id, step.index,
                             exc_info=True)
+
+    async def _chronicle_scene(self, session: GameSession, delivered: list[StoryStep]) -> None:
+        """Save what the player just read to the story ledger.
+
+        Secondary to the ledger in exactly the way memory indexing is: the beat has
+        already been delivered and saved, so a failure here costs long-range context on
+        the next prompt and nothing else. Re-delivering a run rewrites its one entry.
+        """
+        for batch_id in dict.fromkeys(step.batch_id for step in delivered if step.batch_id):
+            read = [s for s in session.steps[: session.cursor + 1] if s.batch_id == batch_id]
+            if not read:
+                continue
+            entry = ChronicleEntry.from_delivery(
+                session.id, batch_id, read, arc=session.world.arc,
+                day=session.world.day, time_of_day=session.world.time_of_day,
+            )
+            try:
+                await asyncio.wait_for(self.chronicle.record_scene(entry), timeout=2.0)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.warning("story chronicle write failed for %s (%s)", session.id, batch_id,
+                            exc_info=True)
+
+    async def _note_attempt(self, game_id: str, batch: BatchState | None, action: str) -> None:
+        """Record what the player did to ask for a run, while the engine still knows it.
+
+        The run itself is written when it is delivered, and by then the words that
+        caused it are two turns of state away.
+        """
+        if batch is None or not action.strip():
+            return
+        try:
+            await asyncio.wait_for(
+                self.chronicle.note_attempt(game_id, batch.batch_id, action[:MAX_ACTION_CHARS]),
+                timeout=2.0,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.warning("story chronicle attempt note failed for %s", game_id, exc_info=True)
 
     def _advance_clock(self, session: GameSession, location_id: str) -> None:
         """Move time forward on a scene change, snapping to a time the place supports.
@@ -602,6 +649,7 @@ class GameService:
         )
         if batch is None:
             await self.get(game_id)  # A save deleted during submission must answer 404.
+        await self._note_attempt(game_id, batch, f'{session.player.name}: "{text.strip()}"')
         return batch, intent
 
     async def submit_choice(
@@ -662,6 +710,7 @@ class GameService:
             history_entry=f'{session.player.name} chose: "{choice.text}"',
             record_style=True,
         )
+        await self._note_attempt(game_id, batch, f'{session.player.name} chose: "{choice.text}"')
         return batch, intent
 
     # -- views ---------------------------------------------------------------------------

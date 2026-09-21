@@ -10,7 +10,7 @@
  */
 
 import { AMBIENT_LIMIT, MAX_OFFLINE_STREAK, MAX_PENDING_POLLS } from "../config";
-import type { StepsBatchOut, StoryStep, WorldOut } from "../api/types";
+import type { CharacterStanding, RelationshipDelta, StepsBatchOut, StoryStep, WorldOut } from "../api/types";
 
 export type Phase =
   | "boot"
@@ -49,6 +49,20 @@ export interface State {
   /** A fetch is in flight; the stage stays on the last beat rather than blanking. */
   busy: boolean;
 
+  /**
+   * Where the player stands with everyone, mirrored from the engine.
+   *
+   * Seeded from the server and then moved by each delivered beat's own
+   * `relationship_changes` -- the same deltas the engine applied when it delivered
+   * them, so the number on screen matches the save without waiting for a round trip.
+   * Every sync overwrites it: this is a view of engine state, never a second opinion.
+   */
+  standing: Record<string, CharacterStanding>;
+  /** What the beat on screen changed. Shown beside the name, then gone. */
+  standingDelta: Record<string, RelationshipDelta>;
+  /** Bumped whenever a beat moves someone, so the flash can replay. */
+  standingSeq: number;
+
   /** In-world filler shown instead of a spinner (PRD §11). */
   ambient: string | null;
   ambientIndex: number;
@@ -74,6 +88,9 @@ export const initialState: State = {
   deciding: false,
   typing: false,
   busy: false,
+  standing: {},
+  standingDelta: {},
+  standingSeq: 0,
   ambient: null,
   ambientIndex: -1,
   ambientSeen: 0,
@@ -92,6 +109,7 @@ export type Action =
   | { type: "menu/new" }
   | { type: "setup/submit"; profile: Profile }
   | { type: "game/started"; gameId: string }
+  | { type: "state/synced"; characters: Record<string, CharacterStanding> }
   | { type: "intro/done" }
   | { type: "opening/start"; steps: StoryStep[] }
   | { type: "opening/handoff" }
@@ -128,9 +146,46 @@ function isBlocking(step: StoryStep | null): boolean {
 }
 
 /** Show a step: it becomes current, and if it blocks, the player is now deciding. */
+/** Clamped exactly as ``CharacterState.apply`` clamps it, so the two cannot disagree. */
+function applyStanding(
+  standing: Record<string, CharacterStanding>,
+  changes: Record<string, RelationshipDelta>,
+): { standing: Record<string, CharacterStanding>; moved: Record<string, RelationshipDelta> } {
+  const next = { ...standing };
+  const moved: Record<string, RelationshipDelta> = {};
+  for (const [id, delta] of Object.entries(changes)) {
+    const known = next[id];
+    if (!known) continue;
+    const relationship = { ...known.relationship };
+    const real: RelationshipDelta = {};
+    for (const [axis, amount] of Object.entries(delta)) {
+      if (!amount) continue;
+      const before = relationship[axis] ?? 0;
+      const after = Math.max(0, Math.min(100, before + amount));
+      if (after === before) continue;
+      relationship[axis] = after;
+      real[axis] = after - before;
+    }
+    if (Object.keys(real).length === 0) continue;
+    next[id] = { ...known, relationship, met: true };
+    moved[id] = real;
+  }
+  return { standing: next, moved };
+}
+
 function present(state: State, step: StoryStep, rest: StoryStep[]): State {
+  // Re-presenting the beat already on screen (a re-offered decision point) must not
+  // move anyone twice.
+  const fresh = step.step_id !== state.current?.step_id;
+  const { standing, moved } = fresh
+    ? applyStanding(state.standing, step.relationship_changes ?? {})
+    : { standing: state.standing, moved: {} };
+  const changed = Object.keys(moved).length > 0;
   return {
     ...state,
+    standing,
+    standingDelta: changed ? moved : fresh ? {} : state.standingDelta,
+    standingSeq: changed ? state.standingSeq + 1 : state.standingSeq,
     current: step,
     buffer: rest,
     deciding: isBlocking(step),
@@ -167,6 +222,10 @@ export function reduce(state: State, action: Action): State {
 
     case "game/started":
       return { ...state, gameId: action.gameId, phase: "intro", busy: false };
+
+    case "state/synced":
+      // The engine's own numbers, which outrank anything mirrored here.
+      return { ...state, standing: { ...action.characters } };
 
     case "intro/done":
       return { ...state, phase: "story", source: "opening" };

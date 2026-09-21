@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.domain.enums import Risk
+from app.domain.enums import Grounding, Risk
 
 
 class PlayerIntent(BaseModel):
@@ -23,4 +23,8 @@ class PlayerIntent(BaseModel):
         default=True,
         description="False for chatter that should not trigger a full generation cycle",
     )
+    #: Where the attempt stands in relation to the world. Classified once, when the turn
+    #: is accepted, and carried from there: a retry must replay the same reading of the
+    #: same words, and a save written before this field existed loads as in_world.
+    grounding: Grounding = Grounding.in_world
     raw: str = ""

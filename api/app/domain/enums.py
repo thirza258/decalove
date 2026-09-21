@@ -41,6 +41,20 @@ class Risk(str, Enum):
     high = "high"
 
 
+class Grounding(str, Enum):
+    """How a typed attempt stands in relation to the story it was typed into.
+
+    Classified by ``agents/grounding.py`` when the turn is accepted, and carried on the
+    intent from there. A save written before this existed loads as ``in_world``.
+    """
+
+    in_world = "in_world"
+    #: Asks for something the setting does not contain. Heard, never enacted.
+    off_world = "off_world"
+    #: Addressed to the game rather than to anyone in it. Absorbed as a non-action.
+    meta = "meta"
+
+
 class BatchStatus(str, Enum):
     queued = "queued"
     running = "running"

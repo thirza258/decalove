@@ -32,7 +32,7 @@ from app.domain.enums import AssetStatus, BatchStatus, StepType
 from app.domain.intent import PlayerIntent
 from app.domain.state import BatchState, GameSession
 from app.domain.story import AssetRef, StoryStep
-from app.repositories.base import GameRepository, StaleSessionError
+from app.repositories.base import ChronicleRepository, GameRepository, StaleSessionError
 from app.services.asset_service import AssetService
 
 log = logging.getLogger(__name__)
@@ -47,6 +47,11 @@ ASSET_PATCH_ATTEMPTS = 3
 #: is that slow, the keyword intent the handler already produced is the better answer.
 INTENT_REFINE_TIMEOUT_S = 20.0
 
+#: How many delivered scenes are read back as long-range context, and how long that
+#: read may take. The ledger is context, not correctness: a slow one is skipped.
+CHRONICLE_LIMIT = 200
+CHRONICLE_TIMEOUT_S = 2.0
+
 
 class GenerationService:
     def __init__(
@@ -56,6 +61,7 @@ class GenerationService:
         narrative: NarrativeAgent,
         director: DirectorAgent,
         memory: MemoryAgent,
+        chronicle: ChronicleRepository,
         visual: VisualAgent,
         assets: AssetService,
         timeout_s: float = 120.0,
@@ -66,6 +72,7 @@ class GenerationService:
         self.narrative = narrative
         self.director = director
         self.memory = memory
+        self.chronicle = chronicle
         self.visual = visual
         self.assets = assets
         self.timeout_s = timeout_s
@@ -351,8 +358,16 @@ class GenerationService:
             # Recent dialogue and state remain in the prompt even if retrieval is down.
             log.warning("memory recall unavailable for %s", snapshot.id, exc_info=True)
             memories = []
+        try:
+            read = self.chronicle.for_game(snapshot.id, limit=CHRONICLE_LIMIT)
+            chronicle = await asyncio.wait_for(read, timeout=CHRONICLE_TIMEOUT_S)
+        except Exception:
+            # The session still carries its recent run summaries; the prompt falls back
+            # to those rather than losing the turn over a slow secondary read.
+            log.warning("story chronicle unavailable for %s", snapshot.id, exc_info=True)
+            chronicle = []
         return await self.narrative.generate(
-            snapshot, intent, memories, decision=decision, directive=directive
+            snapshot, intent, memories, decision=decision, directive=directive, chronicle=chronicle,
         )
 
     def _scripted(

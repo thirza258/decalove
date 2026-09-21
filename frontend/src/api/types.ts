@@ -3,9 +3,10 @@
  * `api/app/domain/story.py`.
  *
  * Only the fields this client actually renders are modelled. The API sends more
- * (relationship deltas, memory proposals, flags) — those are the engine's business,
- * and typing them here would invite the client to start owning state it must not
- * own (PRD §33: the server is the source of truth).
+ * (memory proposals, flags) — those are the engine's business, and typing them here
+ * would invite the client to start owning state it must not own (PRD §33: the server
+ * is the source of truth). Relationship values are modelled because the player is
+ * shown them; they are still never decided here, only mirrored between syncs.
  */
 
 export type StepType =
@@ -53,6 +54,18 @@ export interface Choice {
   text: string;
 }
 
+/** Per-axis change a beat made to one character, as the engine applied it. */
+export type RelationshipDelta = Record<string, number>;
+
+/** One character's live standing, from the engine. */
+export interface CharacterStanding {
+  id: string;
+  name: string;
+  relationship: Record<string, number>;
+  current_emotion: string;
+  met: boolean;
+}
+
 export interface StoryStep {
   step_id: string;
   index: number;
@@ -63,6 +76,8 @@ export interface StoryStep {
   narration?: string | null;
   dialogue?: DialogueLine | null;
   next_choices: Choice[];
+  /** What this beat changed, keyed by character id. Applied by the engine on delivery. */
+  relationship_changes?: Record<string, RelationshipDelta> | null;
   visual?: VisualSpec | null;
   background_asset?: AssetRef | null;
   character_asset?: AssetRef | null;
@@ -127,6 +142,7 @@ export interface GameStateOut {
   pending?: { batch_id: string; status: string; error?: string | null } | null;
   game_id: string;
   world_id: string;
+  characters?: Record<string, CharacterStanding>;
   current_step_index: number;
   queue_depth: number;
   awaiting_player: boolean;

@@ -14,7 +14,11 @@ import pytest
 
 from app.domain.memory import MemoryRecord
 from app.domain.state import CharacterState, GameSession, PlayerProfile, WorldState
-from app.repositories.memory_repo import InMemoryGameRepository, InMemoryMemoryRepository
+from app.repositories.memory_repo import (
+    InMemoryChronicleRepository,
+    InMemoryGameRepository,
+    InMemoryMemoryRepository,
+)
 from app.services.maintenance import MaintenanceService, as_utc
 
 WEEK = timedelta(days=7)
@@ -42,6 +46,7 @@ class Bench:
     def __init__(self, ttl_days: int = 7):
         self.games = InMemoryGameRepository()
         self.memories = InMemoryMemoryRepository()
+        self.chronicle = InMemoryChronicleRepository()
         self.forgotten: list[str] = []
 
         bench = self
@@ -64,6 +69,7 @@ class Bench:
         self.service = MaintenanceService(
             games=self.games,
             memories=self.memories,
+            chronicle=self.chronicle,
             generation=self.generation,
             game_service=Service(),
             ttl_days=ttl_days,

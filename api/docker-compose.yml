@@ -240,8 +240,11 @@ services:
       DECALOVE_API_PREFIX: /api/v1
       DECALOVE_API_UPSTREAM: http://api:8000
       DECALOVE_PORT: "${DECALOVE_PORT:-80}"
-    volumes:
-      - ../frontend/public/images:/usr/share/nginx/html/images:ro
+    # No image volume, deliberately. In this stack every picture comes from MinIO:
+    # the API serves objects under static/images/ (falling back to nothing here, since
+    # the image has no game/images in it), and WEB_MODE deployments never generate art
+    # at runtime. One place to put a picture, one place to look when it is missing.
+    # docs/IMAGES.md is the tutorial: the folder layout, and how to upload.
     depends_on:
       # service_started, not service_healthy. nginx resolves the API per request (see
       # nginx.conf.template), so this server never needed the API to be up to start --

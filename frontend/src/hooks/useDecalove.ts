@@ -97,6 +97,23 @@ export function useDecalove(): Decalove {
     return () => clearInterval(timer);
   }, [state, fetchNext]);
 
+  // Re-read the engine's relationship values once per turn, while the player is
+  // reading the question rather than waiting on anything. Beats carry their own
+  // deltas, so this is a correction, not the source: it costs one idle request and
+  // means a missed beat cannot leave the numbers on screen quietly wrong.
+  const { gameId, deciding, phase, source } = state;
+  useEffect(() => {
+    if (!gameId || !deciding || phase !== "story" || source !== "api") return;
+    const token = epoch.current;
+    let live = true;
+    void api.gameState(gameId).then((synced) => {
+      if (live && token === epoch.current && synced?.characters) {
+        dispatch({ type: "state/synced", characters: synced.characters });
+      }
+    });
+    return () => { live = false; };
+  }, [gameId, deciding, phase, source]);
+
   const runSubmission = useCallback(async (operation: () => Promise<void>) => {
     if (submitting.current) return;
     submitting.current = true;
@@ -124,6 +141,8 @@ export function useDecalove(): Decalove {
         return;
       }
       retryOperation.current = null;
+      // The authored opening ran locally; the engine's own numbers arrive with the sync.
+      if (synced.characters) dispatch({ type: "state/synced", characters: synced.characters });
       dispatch({ type: "opening/handoff" });
     });
   }, [runSubmission, showError]);
@@ -159,6 +178,7 @@ export function useDecalove(): Decalove {
       }
       retryOperation.current = null;
       dispatch({ type: "game/started", gameId: game.game_id });
+      if (game.characters) dispatch({ type: "state/synced", characters: game.characters });
     });
   }, [runSubmission]);
 
@@ -180,6 +200,7 @@ export function useDecalove(): Decalove {
           showError("submission", "Could not send your choice. Please try again.");
           return;
         }
+        if (synced.characters) dispatch({ type: "state/synced", characters: synced.characters });
       }
       const text = kind === "choice" ? current.next_choices.find((choice) => choice.id === value)?.text ?? value : value;
       const accepted = kind === "choice" && source !== "opening"

@@ -12,6 +12,7 @@ import logging
 import re
 
 from app.agents.ending import choose_ending
+from app.agents.grounding import Grounding, classify, classify_action
 from app.agents.prompts import INTENT_SYSTEM, build_intent_prompt
 from app.agents.safety import SafetyFilter
 from app.content.world import World
@@ -153,12 +154,32 @@ class DirectorAgent:
                     risk=Risk.low,
                     summary="the moment passes without anything being said",
                     meaningful=False,
+                    grounding=Grounding.meta if verdict.injection else Grounding.in_world,
                     raw=text,
                 ),
                 False,
             )
 
-        return self.parse_keywords(session, text), self.chat is not None
+        grounding = classify(text)
+        if grounding is Grounding.meta:
+            # An instruction to the game is not a move in the story. The words are kept
+            # -- the player typed them -- but nothing is attempted on their behalf, and
+            # there is nothing for a model to refine.
+            return (
+                PlayerIntent(
+                    action="observe",
+                    risk=Risk.low,
+                    summary="the moment passes without anything being said",
+                    meaningful=False,
+                    grounding=grounding,
+                    raw=text,
+                ),
+                False,
+            )
+
+        intent = self.parse_keywords(session, text)
+        intent.grounding = grounding
+        return intent, self.chat is not None
 
     async def parse(self, session: GameSession, raw: str) -> PlayerIntent:
         keyword_intent, refinable = self.parse_fast(session, raw)
@@ -166,12 +187,16 @@ class DirectorAgent:
             return keyword_intent
 
         try:
-            return await self._parse_with_llm(session, (raw or "").strip())
+            return await self._parse_with_llm(
+                session, (raw or "").strip(), grounding=keyword_intent.grounding
+            )
         except (LLMError, ValueError) as exc:
             log.warning("intent parse via LLM failed, using keyword parser: %s", exc)
             return keyword_intent
 
-    async def _parse_with_llm(self, session: GameSession, text: str) -> PlayerIntent:
+    async def _parse_with_llm(
+        self, session: GameSession, text: str, *, grounding: Grounding = Grounding.in_world
+    ) -> PlayerIntent:
         assert self.chat is not None
         payload = await self.chat.complete_json(
             system=INTENT_SYSTEM,
@@ -182,10 +207,16 @@ class DirectorAgent:
             temperature=self.temperature,
         )
         payload.pop("raw", None)
+        # Grounding is the engine's call, not the parser's: the same words must read the
+        # same way on a retry, and a model that decides the world can bend will bend it.
+        payload.pop("grounding", None)
         intent = PlayerIntent.model_validate({**payload, "raw": text})
         intent.target = self.world.resolve_character(intent.target)
         if not intent.action.strip():
             intent.action = "talk_to"
+        # A second look at the attempt the model named, for phrasing the patterns missed.
+        named = classify_action(intent.action)
+        intent.grounding = grounding if grounding is not Grounding.in_world else named
         return intent
 
     def parse_keywords(self, session: GameSession, text: str) -> PlayerIntent:
