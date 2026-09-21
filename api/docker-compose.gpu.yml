@@ -14,9 +14,25 @@
 ## hand: docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
 ##
 ## Requires the NVIDIA Container Toolkit (nvidia-container-toolkit) on the host.
+##
+## This file is also where PyTorch enters the stack. docker-compose.yml builds every
+## service from Dockerfile, which has no torch in it at all; the image worker below is
+## rebuilt from Dockerfile.gpu, which does. Without this overlay nothing pulls the CUDA
+## payload -- which is the whole several-gigabyte cost of a backend a WEB_MODE
+## deployment never calls.
+##
+## Only worker-images is switched, deliberately. The API enqueues image work and the
+## story worker writes prose; neither ever loads a pipeline, so neither has any use for
+## torch. They stay on the plain `decalove-api` image built from docker-compose.yml.
 
 services:
   worker-images:
+    build:
+      context: .
+      dockerfile: Dockerfile.gpu
+    # A separate tag, not a second definition of `decalove-api`: two builds writing one
+    # tag means whichever ran last decides what the API and the story worker are running.
+    image: decalove-api-gpu
     environment:
       NVIDIA_VISIBLE_DEVICES: all
       NVIDIA_DRIVER_CAPABILITIES: compute,utility

@@ -148,7 +148,12 @@ $WITH_WEB || note "web client disabled"
 
 if $DO_BUILD; then
     say "starting the Decalove stack, building images first"
-    note "a first build pulls a CUDA base image and installs Node and Python deps; expect a few minutes."
+    if $USE_GPU; then
+        note "a first build pulls a CUDA base image for the image worker; expect several minutes."
+    else
+        note "a first build installs Node and Python deps; expect a couple of minutes."
+        note "no PyTorch is downloaded without --gpu."
+    fi
 else
     say "starting the Decalove stack from the images already built"
 fi

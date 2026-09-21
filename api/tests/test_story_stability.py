@@ -1,11 +1,13 @@
 """Regressions for choice boundaries, chapter continuity, endings and memory outages."""
 
 import asyncio
+import logging
 from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
 
+from app.main import _ProbeFilter
 from app.agents.memory_agent import MemoryAgent
 from app.agents.narrative import NarrativeAgent
 from app.agents.prompts import build_context, build_run_prompt, build_system_prompt
@@ -283,3 +285,104 @@ async def test_delivery_retry_does_not_duplicate_memory_or_relationships(world, 
     saved = await engine.games.get("g1")
     assert saved.characters["aiko"].value("trust") == session.characters["aiko"].value("trust") + 3
     assert len(await engine.memories.for_game("g1")) == 1
+
+
+def _access_record(path: str, status: int) -> logging.LogRecord:
+    """A record shaped exactly as uvicorn.access emits one.
+
+    Pinned here because _ProbeFilter reads the args tuple positionally: if uvicorn ever
+    changes that format the filter would start dropping nothing, or -- far worse --
+    dropping real traffic, and neither shows up as a failure anywhere else.
+    """
+    return logging.LogRecord(
+        name="uvicorn.access", level=logging.INFO, pathname=__file__, lineno=1,
+        msg='%s - "%s %s HTTP/%s" %d',
+        args=("172.18.0.1:54321", "GET", path, "1.1", status),
+        exc_info=None,
+    )
+
+
+@pytest.mark.parametrize(
+    "path,status,kept",
+    [
+        ("/health", 200, False),          # the container probe, every 30s forever
+        ("/health", 500, True),           # a probe that started failing is an event
+        ("/health?verbose=1", 200, True), # only the probe's own exact path is quiet
+        ("/api/v1/games", 200, True),     # real traffic is never dropped
+        ("/healthz", 200, True),          # the web client's path, not this service's
+    ],
+)
+def test_probe_filter_quiets_only_the_healthcheck(path, status, kept):
+    assert _ProbeFilter().filter(_access_record(path, status)) is kept
+
+
+def test_probe_filter_passes_records_it_does_not_understand():
+    """A differently-shaped record is logged, not swallowed."""
+    record = logging.LogRecord(
+        name="uvicorn.access", level=logging.INFO, pathname=__file__, lineno=1,
+        msg="something else entirely", args=None, exc_info=None,
+    )
+    assert _ProbeFilter().filter(record) is True
+
+
+API_DIR = Path(__file__).resolve().parent.parent
+_SHARED_FROM = "# Non-root: the container writes to /data and /srv/api/models."
+
+
+def test_the_two_images_differ_only_in_torch():
+    """Dockerfile and Dockerfile.gpu must stay one image with two bases.
+
+    They are separate files so the plain stack never pulls the CUDA payload, which costs
+    a copy of the application layout -- the user, the paths the volumes mount over, the
+    healthcheck, the command. A fix applied to one and not the other is invisible until
+    the GPU overlay is deployed, which is exactly when nobody is looking at the web
+    stack's Dockerfile.
+    """
+    slim = (API_DIR / "Dockerfile").read_text()
+    gpu = (API_DIR / "Dockerfile.gpu").read_text()
+
+    assert _SHARED_FROM in slim and _SHARED_FROM in gpu
+    assert slim[slim.index(_SHARED_FROM):] == gpu[gpu.index(_SHARED_FROM):], (
+        "Dockerfile and Dockerfile.gpu have drifted below the pip install; apply the "
+        "change to both."
+    )
+
+
+def _directives(path: Path) -> str:
+    """The file with its commentary removed.
+
+    Both files *discuss* torch and requirements-sdxl.txt at length, so matching the raw
+    text asserts what the header says rather than what the image installs.
+    """
+    return "\n".join(
+        line for line in path.read_text().splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    )
+
+
+def test_only_the_gpu_image_installs_the_sdxl_extras():
+    """The whole point of the split, stated as a fact rather than a comment.
+
+    requirements.txt is also asserted free of them: they arrived there transitively once
+    and pulled torch in behind them.
+    """
+    slim = _directives(API_DIR / "Dockerfile")
+    gpu = _directives(API_DIR / "Dockerfile.gpu")
+    core = _directives(API_DIR / "requirements.txt").lower()
+
+    assert "requirements-sdxl.txt" in gpu and "pytorch/pytorch" in gpu
+    assert "requirements-sdxl.txt" not in slim, "the default image installs SDXL extras"
+    assert "pytorch" not in slim, "the default image is built on a torch base image"
+    for package in ("diffusers", "transformers", "accelerate", "torch"):
+        assert package not in core, f"{package} is back in requirements.txt"
+
+
+def test_the_core_requirements_declare_what_sprite_cutout_needs():
+    """Pillow and numpy used to arrive as diffusers' dependencies.
+
+    app/assets/transparency.py falls back to the untouched image when they are missing,
+    so losing them would not fail anything -- it would just quietly serve every character
+    sprite with its background still on, on the openrouter path that never wanted torch.
+    """
+    core = _directives(API_DIR / "requirements.txt").lower()
+    assert "pillow" in core and "numpy" in core

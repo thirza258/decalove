@@ -7,6 +7,7 @@ persisting?" has a one-request answer instead of being a mystery.
 
 from __future__ import annotations
 
+import importlib.util
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -157,6 +158,19 @@ def _build_asset_store(settings: Settings) -> tuple[AssetStore, str]:
     return LocalAssetStore(root), "local"
 
 
+def _sdxl_installed() -> bool:
+    """Whether this image carries the SDXL extras at all.
+
+    find_spec rather than import: torch costs seconds and hundreds of megabytes of RSS to
+    import, and the point of asking is that we are probably about to decide not to.
+
+    Only the GPU image has them (see Dockerfile.gpu), so on the default image this is the
+    difference between 'sdxl' being dropped at boot with a warning and every picture
+    failing on an ImportError the chain was never given a chance to route around.
+    """
+    return all(importlib.util.find_spec(m) is not None for m in ("torch", "diffusers"))
+
+
 def _build_image_chain(settings: Settings, openrouter: dict[str, Any]) -> ImageProvider:
     """Assemble ``IMAGE_BACKEND`` into one provider.
 
@@ -176,6 +190,14 @@ def _build_image_chain(settings: Settings, openrouter: dict[str, Any]) -> ImageP
                 continue
             providers.append(OpenRouterImage(model=settings.OPENROUTER_IMAGE_MODEL, **openrouter))
         elif backend == "sdxl":
+            if not _sdxl_installed():
+                log.warning(
+                    "IMAGE_BACKEND lists 'sdxl' but torch/diffusers are not installed - "
+                    "dropping it from the chain. This is the default image; rebuild with "
+                    "Dockerfile.gpu (COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml) "
+                    "to render locally."
+                )
+                continue
             # Runs locally: no API key, and the weights load lazily on the first image, so
             # a chain that never reaches this link costs nothing to have declared.
             providers.append(

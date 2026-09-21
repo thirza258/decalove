@@ -21,8 +21,15 @@
 ## Infrastructure ports (MONGODB_PORT, MINIO_PORT, MINIO_CONSOLE_PORT, REDIS_PORT)
 ## can also be customized in .env if host port conflicts occur.
 ##
-## No GPU is reserved by default, so the stack comes up on any host. For local SDXL put
-## this in .env alongside IMAGE_BACKEND=sdxl,... and `docker compose up -d` picks it up:
+## Infrastructure credentials come from .env too -- MONGODB_ROOT_USERNAME/PASSWORD and
+## MINIO_ACCESS_KEY/SECRET_KEY. They are read by ${...} interpolation, which reads .env
+## rather than shadowing it, so the invariant above still holds. Each pair seeds the
+## server *and* is what the app authenticates with, so the two can never drift apart.
+##
+## No GPU is reserved by default, so the stack comes up on any host, and no PyTorch is
+## installed either: every service here builds from Dockerfile, which does not have it.
+## For local SDXL put this in .env alongside IMAGE_BACKEND=sdxl,... and `docker compose
+## up -d` picks it up -- it rebuilds the image worker alone from Dockerfile.gpu:
 ##
 ##   COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml
 ##
@@ -44,7 +51,7 @@ x-app-env: &app-env
     # Facts about *this network*, not preferences, which is why they are allowed to
     # override .env: inside compose these services answer to their service names, and a
     # .env written for a local run points at localhost.
-    MONGODB_URL: mongodb://root:rootpassword@mongodb:27017
+    MONGODB_URL: mongodb://${MONGODB_ROOT_USERNAME:-root}:${MONGODB_ROOT_PASSWORD:-rootpassword}@mongodb:27017
     MINIO_ENDPOINT: minio:9000
     REDIS_URL: redis://redis:6379/0
     CELERY_BROKER_URL: redis://redis:6379/0
@@ -71,8 +78,10 @@ services:
     ports:
       - "${MONGODB_PORT:-27017}:27017"
     environment:
-      MONGO_INITDB_ROOT_USERNAME: root
-      MONGO_INITDB_ROOT_PASSWORD: rootpassword
+      # Only read when the data volume is empty -- see .env.example. The same pair
+      # builds MONGODB_URL above, so the app and the server cannot disagree.
+      MONGO_INITDB_ROOT_USERNAME: ${MONGODB_ROOT_USERNAME:-root}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGODB_ROOT_PASSWORD:-rootpassword}
     volumes:
       - mongodb_data:/data/db
     healthcheck:
@@ -84,14 +93,16 @@ services:
     restart: unless-stopped
 
   minio:
-    image: quay.io/minio/minio
+    image: minio/minio
     container_name: decalove-minio
     ports:
       - "${MINIO_PORT:-9000}:9000"   # S3 API
       - "${MINIO_CONSOLE_PORT:-9001}:9001"   # console
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      # The app's own MINIO_ACCESS_KEY/SECRET_KEY, deliberately: a separate pair for
+      # the server would boot a stack that then 403s on every asset write.
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
     command: server /data --console-address ":9001"
     volumes:
       - minio_data:/data
@@ -169,8 +180,10 @@ services:
   ## Image generation. Nothing a player is reading waits on it: an unfinished asset is
   ## served as "pending" and the client draws its placeholder (PRD §26).
   ##
-  ## No GPU by default, so IMAGE_BACKEND=openrouter runs on any host. docker-compose.gpu.yml
-  ## adds the card for IMAGE_BACKEND=sdxl -- see the header for the one-line .env opt-in.
+  ## No GPU by default, so IMAGE_BACKEND=openrouter runs on any host, and this image has
+  ## no torch in it to run one with. docker-compose.gpu.yml adds both the card and
+  ## Dockerfile.gpu for IMAGE_BACKEND=sdxl -- see the header for the one-line .env opt-in.
+  ## Without it, 'sdxl' is dropped from the chain at boot rather than failing per picture.
   ##
   ## --concurrency=1 is not a throughput mistake. There is one card, diffusion saturates
   ## it, and a second in-flight pass only competes for the same VRAM.
@@ -230,8 +243,12 @@ services:
     volumes:
       - ../frontend/public/images:/usr/share/nginx/html/images:ro
     depends_on:
+      # service_started, not service_healthy. nginx resolves the API per request (see
+      # nginx.conf.template), so this server never needed the API to be up to start --
+      # and gating on it meant a slow or unhealthy API took the whole site off the air
+      # instead of just the parts that call it.
       api:
-        condition: service_healthy
+        condition: service_started
     restart: unless-stopped
 
 volumes:

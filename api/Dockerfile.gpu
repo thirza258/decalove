@@ -1,17 +1,19 @@
 # syntax=docker/dockerfile:1
 
-# Decalove story engine -- the default image. No PyTorch.
+# Decalove story engine -- the SDXL image. Carries PyTorch.
 #
-# Story generation is an HTTP call to OpenRouter and needs nothing local; pictures come
-# from the same API, or from the asset store, or not at all. Only IMAGE_BACKEND=sdxl
-# renders locally, and that is what Dockerfile.gpu is for -- torch plus its CUDA payload
-# is several gigabytes to pull, store and redeploy for a code path a WEB_MODE deployment
-# never reaches.
+# Built only by docker-compose.gpu.yml, which is how IMAGE_BACKEND=sdxl is turned on.
+# Everything else -- the API, the story worker, an image worker pointed at OpenRouter --
+# runs on the plain Dockerfile and never pulls the CUDA payload.
 #
-# Keep the body below in step with Dockerfile.gpu; the two differ only in their base
-# image and in requirements-sdxl.txt. tests/test_story_stability.py pins that.
+# torch comes from the base image rather than requirements-sdxl.txt: the wheel that
+# matches this image's CUDA build is already installed, and asking pip for another one
+# would either reinstall it or fight it.
+#
+# Keep the body below in step with Dockerfile; the two differ only in their base image
+# and in requirements-sdxl.txt. tests/test_story_stability.py pins that.
 
-FROM python:3.12-slim
+FROM pytorch/pytorch:latest
 
 # Only what describes *this image's* filesystem layout -- the paths the RUN below
 # creates and the volumes mount over. Everything else the app reads is a setting, and
@@ -22,16 +24,17 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     DEBIAN_FRONTEND=noninteractive \
     LOCAL_ASSET_DIR=/data/assets \
-    # Unused without the SDXL extras, but kept identical to Dockerfile.gpu so the two
-    # images differ in exactly one thing: whether torch is present.
+    # SDXL weights are stored under /srv/api/models/sdxl (a mounted volume).
+    # Point HF_HOME there so diffusers never writes to ~/.cache.
     SDXL_MODEL_DIR=/srv/api/models/sdxl \
     HF_HOME=/srv/api/models/sdxl \
     TRANSFORMERS_CACHE=/srv/api/models/sdxl
 
 WORKDIR /build
 
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.txt requirements-sdxl.txt ./
+# The only line that differs from Dockerfile: the SDXL extras on top of the same core.
+RUN pip install --no-cache-dir -r requirements.txt -r requirements-sdxl.txt
 
 # Non-root: the container writes to /data and /srv/api/models.
 RUN useradd --create-home --uid 10001 decalove \

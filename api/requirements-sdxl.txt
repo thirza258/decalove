@@ -1,0 +1,13 @@
+# Local SDXL image generation -- IMAGE_BACKEND=sdxl only.
+#
+# Installed by Dockerfile.gpu, not Dockerfile: torch and its CUDA payload are several
+# gigabytes, and a WEB_MODE deployment never generates an image at runtime, so the plain
+# stack has no use for any of it. torch itself comes from the pytorch base image.
+#
+# Nothing here is imported at module scope -- app/llm/sdxl_image.py imports inside its
+# functions -- so the API runs normally when these are absent, and runtime.py drops
+# 'sdxl' from IMAGE_BACKEND at boot rather than failing on the first picture.
+diffusers>=0.25.0
+transformers>=4.36.0
+accelerate>=0.25.0
+safetensors>=0.4.0
