@@ -70,7 +70,9 @@ cd api
 docker compose up -d mongodb minio
 ```
 
-The MinIO image uses `quay.io/minio/minio`, as in the
+The MinIO image is `minio/minio` from Docker Hub, and its root credentials come from
+`MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` in `api/.env` -- the same pair the API
+authenticates with, so the server and the client cannot drift apart. See the
 [upstream container documentation](https://github.com/minio/minio/blob/master/docs/docker/README.md).
 
 For the local server, `auto` uses MongoDB and MinIO when reachable. The existing offline

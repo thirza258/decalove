@@ -45,5 +45,11 @@ ENV DECALOVE_PORT="80"
 
 EXPOSE 80
 
-HEALTHCHECK --interval=15s --timeout=5s --start-period=5s --retries=3 \
-    CMD wget -q -O /dev/null "http://127.0.0.1:${DECALOVE_PORT}/config.js" || exit 1
+# /healthz rather than /config.js: it serves the same file, so an entrypoint that did
+# not run still fails the check, but nginx logs nothing for it. At 15s the probe was
+# writing four access-log lines a minute and drowning real traffic.
+#
+# 30s because nothing acts on the result quickly enough for 15s to buy anything: the
+# check reports a static file server that either started or did not.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD wget -q -O /dev/null "http://127.0.0.1:${DECALOVE_PORT}/healthz" || exit 1

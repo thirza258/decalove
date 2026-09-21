@@ -7,6 +7,31 @@ server {
     server_name _;
     root /usr/share/nginx/html;
 
+    # This server runs behind something that terminates TLS, so it must never put its
+    # own address in a redirect. nginx answers a directory-shaped URL with a 301 to the
+    # canonical path, and by default builds that as an absolute URL from the host and
+    # the port it is listening on -- http://host:80/... -- which sends an https visitor
+    # to a scheme and a port that are not reachable from outside. Relative redirects are
+    # resolved by the browser against the URL it actually used.
+    absolute_redirect off;
+    port_in_redirect off;
+
+    # Bounds on how long one client may hold a connection while sending nothing. Without
+    # them a stalled mobile connection -- or a trivially cheap slow-loris -- keeps a
+    # worker slot indefinitely, and the failure that follows looks like the whole site
+    # being down rather than like one bad client.
+    #
+    # These govern the *client* side only. The /api/ block sets its own upstream
+    # timeouts, deliberately much longer, because a long poll is supposed to wait.
+    client_header_timeout 15s;
+    client_body_timeout 30s;
+    send_timeout 30s;
+    keepalive_timeout 65s;
+
+    # Free the resources of a connection that timed out rather than leaving it in
+    # FIN_WAIT, which on a busy box is the difference between recovering and not.
+    reset_timedout_connection on;
+
     # The API, same-origin. This is what makes DECALOVE_API_BASE="" work, and with it
     # there is no CORS to satisfy and no mixed-scheme pair for the browser to reject.
     #
@@ -41,12 +66,53 @@ server {
         # first. The client's own timeout stays the one that decides.
         proxy_read_timeout 120s;
         proxy_send_timeout 120s;
+        # Fail fast when the API is simply not there -- a restarting container refuses
+        # the connection immediately, and the default here would otherwise hold the
+        # browser for a minute before admitting it.
+        proxy_connect_timeout 5s;
+
+        # Never replay a request onto a second attempt. The engine accepts a decision
+        # once; a proxy-level retry of a POST it already received is a duplicate
+        # submission, which is worse than the 502 it is trying to hide.
+        proxy_next_upstream off;
+
+        # The client parses API replies as JSON and reads `detail` off them. nginx's
+        # stock error page is HTML, so an unreachable API surfaced as a parse error
+        # rather than a failed request.
+        #
+        # 502 and 504 only, and deliberately no proxy_intercept_errors: these two are
+        # nginx's own -- the API was unreachable or never answered -- so error_page
+        # catches them without it. The API's *own* 503s carry a written explanation
+        # ("Storage is unavailable. Keep your draft open and retry saving.") that the
+        # client displays, and intercepting would replace it with something vaguer.
+        error_page 502 504 = @api_unavailable;
+    }
+
+    location @api_unavailable {
+        default_type application/json;
+        add_header Cache-Control "no-store" always;
+        return 503 '{"detail":"The story engine is unreachable. Retry in a moment."}';
     }
 
     # Regenerated from the environment on every start, so it must never be held by a
     # browser across a redeploy.
     location = /config.js {
         add_header Cache-Control "no-store" always;
+    }
+
+    # The container healthcheck's target. It serves config.js, so it still answers the
+    # question the check is really asking -- did the entrypoint run and write the
+    # deployment settings? -- and 404s if it did not.
+    #
+    # It exists separately from /config.js for one reason: access_log off. A probe every
+    # 15s against the real path buried every actual page view in healthcheck lines.
+    #
+    # Deliberately does not touch the API. This server's job is to hand the browser the
+    # bundle, and it can still do that while the API is down; failing the check then
+    # would take the site off the air over something it does not need.
+    location = /healthz {
+        access_log off;
+        try_files /config.js =404;
     }
 
     location = /index.html {

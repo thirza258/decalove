@@ -23,6 +23,37 @@ logging.basicConfig(
 log = logging.getLogger("decalove")
 
 
+class _ProbeFilter(logging.Filter):
+    """Drops the container healthcheck's own requests from the access log.
+
+    The probe runs every 30s forever and always says the same thing, so left in it is
+    most of the log by volume and pushes real traffic out of whatever window an
+    operator is actually reading. A failing probe is still visible -- Docker reports
+    the container unhealthy -- so nothing is lost by not narrating the passing ones.
+
+    Only 2xx/3xx are dropped: a /health that starts answering 500 is a real event.
+    """
+
+    _QUIET = ("/health",)
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if not isinstance(args, tuple) or len(args) < 5:
+            return True
+        # uvicorn.access formats as: '%s - "%s %s HTTP/%s" %d' %
+        # (client_addr, method, full_path, http_version, status_code)
+        path, status = args[2], args[4]
+        return not (
+            isinstance(path, str)
+            and path in self._QUIET
+            and isinstance(status, int)
+            and status < 400
+        )
+
+
+logging.getLogger("uvicorn.access").addFilter(_ProbeFilter())
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.runtime = await build_runtime(settings)

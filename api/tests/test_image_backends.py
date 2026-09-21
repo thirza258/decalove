@@ -141,6 +141,17 @@ class TestFallbackChain:
 class TestChainAssembly:
     """What ``_build_image_chain`` makes of a given IMAGE_BACKEND."""
 
+    @pytest.fixture(autouse=True)
+    def _sdxl_is_installed(self, monkeypatch):
+        """These tests are about parsing IMAGE_BACKEND, not about which image we are in.
+
+        The default image has no torch, so without this they would assert the ordering of
+        a chain that had already had 'sdxl' dropped out of it -- and would have started
+        passing for the wrong reason on a GPU box. TestSDXLNotInstalled below owns that
+        dimension.
+        """
+        monkeypatch.setattr("app.runtime._sdxl_installed", lambda: True)
+
     @staticmethod
     def _settings(backend: str, *, key: str = "") -> Settings:
         return Settings(
@@ -180,6 +191,49 @@ class TestChainAssembly:
         offline -- the contract /health reports as images="placeholder".
         """
         assert _build_image_chain(self._settings("openrouter"), {}).name == "placeholder"
+
+
+class TestSDXLNotInstalled(TestChainAssembly):
+    """The default image ships without torch -- only Dockerfile.gpu carries it.
+
+    'sdxl' has to be droppable for the same reason a keyless 'openrouter' is: the
+    alternative is an ImportError on the first picture of every deployment that left the
+    default IMAGE_BACKEND alone, raised from inside a worker where the chain can no
+    longer route around it.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _sdxl_is_installed(self, monkeypatch):
+        monkeypatch.setattr("app.runtime._sdxl_installed", lambda: False)
+
+    def test_a_chain_of_one_is_not_wrapped(self):
+        """Nothing usable is left, so this is the placeholder contract, not sdxl."""
+        assert _build_image_chain(self._settings("sdxl"), {}).name == "placeholder"
+
+    def test_two_backends_become_a_chain_in_order(self):
+        """The hosted backend serves alone rather than the request failing."""
+        chain = _build_image_chain(
+            self._settings("sdxl,openrouter", key="k"), self._openrouter("k")
+        )
+        assert chain.name == "openrouter-image"
+
+    def test_openrouter_is_dropped_when_there_is_no_key(self):
+        """Both links unusable for different reasons, and neither is fatal."""
+        assert _build_image_chain(self._settings("sdxl,openrouter"), {}).name == "placeholder"
+
+
+def test_sdxl_installed_is_not_an_import():
+    """It runs at boot on every deployment, including the ones that do have torch.
+
+    Importing torch to find out whether torch is importable costs seconds of start-up and
+    hundreds of megabytes of RSS in the API and both workers -- in the default image, to
+    answer 'no'.
+    """
+    import app.runtime
+
+    before = set(sys.modules)
+    app.runtime._sdxl_installed()
+    assert "torch" not in set(sys.modules) - before
 
 
 def _fake_torch(*, cuda: bool):

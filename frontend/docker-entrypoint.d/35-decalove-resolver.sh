@@ -16,5 +16,16 @@ if [ -z "$nameservers" ]; then
     exit 0
 fi
 
-echo "resolver ${nameservers}valid=30s ipv6=off;" > /etc/nginx/conf.d/00-resolver.conf
-echo "decalove: resolver ${nameservers}"
+# valid=10s, not the 30s this used to cache for: a restarted API container comes back on
+# a new address, and until the entry expires every /api/ request is proxied at an IP that
+# nothing is listening on any more. That window is a redeploy's worth of 502s, and Docker's
+# embedded DNS is a local lookup -- three times as many of them costs nothing measurable.
+#
+# resolver_timeout so a DNS server that stops answering fails the request in 5s instead of
+# holding it for nginx's 30s default, which is long enough to look like a hang and long
+# enough to pile up connections while it does.
+{
+    echo "resolver ${nameservers}valid=10s ipv6=off;"
+    echo "resolver_timeout 5s;"
+} > /etc/nginx/conf.d/00-resolver.conf
+echo "decalove: resolver ${nameservers}(valid=10s, timeout=5s)"
