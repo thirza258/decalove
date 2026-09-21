@@ -33,7 +33,7 @@ services:
     image: decalove-web
     container_name: decalove-web
     ports:
-      - "${DECALOVE_WEB_PORT:-3000}:${DECALOVE_PORT:-80}"
+      - "${DECALOVE_WEB_PORT:-${WEB_PORT:-3000}}:${DECALOVE_PORT:-80}"
     env_file:
       - path: .env
         required: false

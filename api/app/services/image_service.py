@@ -3,6 +3,7 @@ import uuid
 import datetime
 from fastapi import HTTPException, UploadFile
 from bson import ObjectId
+from minio.error import S3Error
 from app.config import settings
 from app.storage import get_storage_client
 from app.database import get_db
@@ -123,5 +124,9 @@ async def get_image_data(image_id: str) -> tuple[bytes, str]:
         response.close()
         response.release_conn()
         return data, image["content_type"]
+    except S3Error as e:
+        if e.code in ("NoSuchKey", "NoSuchBucket"):
+            raise HTTPException(status_code=404, detail="Image not found in storage")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve image: {e}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to retrieve image: {e}")

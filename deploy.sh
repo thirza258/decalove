@@ -173,16 +173,17 @@ published() {
 }
 
 api_url="$(published api 8000)"
-web_url="$(published web 80)"
+web_url="$(published web "${DECALOVE_PORT:-80}")"
+minio_console_url="$(published minio 9001)"
+minio_console_url="${minio_console_url:-http://localhost:${MINIO_CONSOLE_PORT:-9001}}"
 
 printf '\n%s\n' "${GREEN}Decalove is up.${OFF}"
 [ -n "$web_url" ] && printf '  %-18s %s\n' "game" "$web_url"
 [ -n "$api_url" ] && printf '  %-18s %s\n' "API" "$api_url"
 [ -n "$api_url" ] && printf '  %-18s %s\n' "health" "$api_url/health"
-printf '  %-18s %s\n' "MinIO console" "http://localhost:9001"
+printf '  %-18s %s\n' "MinIO console" "$minio_console_url"
 
-# Only MongoDB, MinIO and Redis declare healthchecks, so `up --wait` counts the API and
-# the two Celery workers ready as soon as they are *running* -- a worker that dies on a
-# bad broker URL and is restarted by `restart: unless-stopped` still reaches this line.
-printf '\n%s\n' "  ${DIM}the API and workers report ready once running; ./deploy.sh ps confirms they stayed up.${OFF}"
+# The API and workers declare healthchecks so `up --wait` confirms each service
+# is responsive before this line is reached.
+printf '\n%s\n' "  ${DIM}./deploy.sh ps confirms container status.${OFF}"
 printf '%s\n' "  logs: ./deploy.sh logs        stop: ./deploy.sh down"
