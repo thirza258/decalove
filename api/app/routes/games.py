@@ -83,6 +83,7 @@ async def create_game(request: NewGameRequest, runtime: Runtime = RuntimeDep) ->
         pronouns=request.pronouns,
         tone=request.tone,
         romance_focus=runtime.world.resolve_character(request.romance_focus),
+        route=request.route,
     )
     session = await runtime.game_service.create_game(profile, request.world_id)
     return runtime.game_service.to_state(session)

@@ -170,7 +170,10 @@ export function useDecalove(): Decalove {
     dispatch({ type: "setup/submit", profile });
     const token = epoch.current;
     void runSubmission(async () => {
-      const game = await api.newGame({ player_name: profile.name || "You", pronouns: profile.pronouns, tone: profile.tone });
+      const game = await api.newGame({
+        player_name: profile.name || "You", pronouns: profile.pronouns,
+        tone: profile.tone, route: profile.route,
+      });
       if (token !== epoch.current) return;
       if (!game) {
         dispatch({ type: "offline", message: "Could not start a new story. Please try again." });

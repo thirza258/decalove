@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from enum import Enum
 
+from app.agents.routes import open_routes
 from app.content.world import World
 from app.domain.state import GameSession
 
@@ -94,6 +95,26 @@ def choose_ending(
 
     if overall < growth_floor:
         return EndingKind.solo, None
-    if romantic > platonic:
+    if romantic > platonic and character_id in open_routes(world, session):
         return EndingKind.romance, character_id
     return EndingKind.friendship, character_id
+
+
+def romance_partners(
+    world: World, session: GameSession, *, growth_floor: int = GROWTH_FLOOR
+) -> list[str]:
+    """Everyone this story is ending with romantically, most earned first.
+
+    One name at most in a single route, because that is all the route leaves open. A
+    harem ends with everybody who was actually earned -- and with nobody, if the
+    player spent the year being pleasant to four people and close to none.
+    """
+    earned = []
+    for character_id in open_routes(world, session):
+        state = session.characters.get(character_id)
+        if state is None or not state.met or world.character(character_id) is None:
+            continue
+        overall, romantic, platonic = growth_for(world, session, character_id)
+        if overall >= growth_floor and romantic > platonic:
+            earned.append((overall, character_id))
+    return [character_id for _, character_id in sorted(earned, reverse=True)]

@@ -479,6 +479,8 @@ class GenerationService:
                         **generated.flags_set,
                         "ending": directive.ending_kind or "solo",
                         "ending_partner": directive.ending_partner or "",
+                        # A flag is a scalar, so a harem's cast is one joined string.
+                        "ending_partners": ",".join(directive.ending_partners),
                     }
                 background = self.visual.background_spec(spec)
                 character = self.visual.character_spec(spec)

@@ -147,6 +147,12 @@ world cannot contain is *heard* rather than enacted, and an instruction to the g
 ("restart", "make this a zombie apocalypse") is absorbed as a non-action. Ordinary
 attempts — including every one no menu offered — go through untouched.
 
+**The player sets the shape of their year.** A single route narrows to one person once
+somebody is clearly ahead, and the save records who; a harem route never narrows and its
+finale resolves everyone it earned. Who a playthrough can be romantic with is one
+predicate in `agents/routes.py`, enforced by the validator, the ending, the Director and
+the offline narrator alike.
+
 **The story keeps a ledger.** Every delivered run is saved with the player's own words
 for the move that caused it, and the prompt is given the first three scenes and the
 last twelve — so a callback in the summer arc can still reach the prologue instead of

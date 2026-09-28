@@ -16,6 +16,7 @@ import re
 from dataclasses import dataclass
 
 from app.agents.safety import SafetyFilter
+from app.agents.routes import ROUTE_FLAG, open_routes
 from app.content.world import World
 from app.domain.enums import StepType
 from app.domain.state import GameSession
@@ -43,7 +44,7 @@ _FLAG_KEY = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
 
 #: Flags the engine owns. ``_commit_step`` merges ``flags_set`` straight into world state,
 #: so without this a narration step could forge the marker that says the story is over.
-_RESERVED_FLAGS = frozenset({"ending", "ending_partner", "ended"})
+_RESERVED_FLAGS = frozenset({"ending", "ending_partner", "ending_partners", "ended", ROUTE_FLAG})
 
 #: Per-step flag budget. World flags are never pruned and every one of them is rendered
 #: into the prompt, so an enthusiastic model would add ~1,100 tokens to every future call.
@@ -107,6 +108,7 @@ class Validator:
         kept: list[GeneratedStep] = []
         location = session.world.location
         known = set(self.world.character_ids)
+        open_now = open_routes(self.world, session)
         step_limit = len(run.steps) if is_opening else self.max_steps
 
         def flag(rule: str, detail: str, remedy: str, index: int | None) -> None:
@@ -216,6 +218,11 @@ class Validator:
                         "clamped",
                         index,
                     )
+                if clamped.romance and target not in open_now:
+                    # Warmth is warmth and can grow with anyone. This one axis is the
+                    # engine's to open, and prose cannot open it.
+                    clamped = clamped.model_copy(update={"romance": 0})
+                    flag("state_consistency", f"{target} romance is not a route here", "dropped", index)
                 if not clamped.is_zero():
                     changes[target] = clamped
             step.relationship_changes = changes

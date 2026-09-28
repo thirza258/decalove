@@ -11,8 +11,9 @@ from __future__ import annotations
 import logging
 import re
 
-from app.agents.ending import choose_ending
+from app.agents.ending import choose_ending, romance_partners
 from app.agents.grounding import Grounding, classify, classify_action
+from app.agents.routes import note as route_note
 from app.agents.prompts import INTENT_SYSTEM, build_intent_prompt
 from app.agents.safety import SafetyFilter
 from app.content.world import World
@@ -318,9 +319,13 @@ class DirectorAgent:
 
         finale = self._finale_due(session, decision)
         ending_kind, ending_partner = (None, None)
+        partners: list[str] = []
         if finale:
             kind, partner = choose_ending(self.world, session)
             ending_kind, ending_partner = kind.value, partner
+            if partner and kind.value == "romance":
+                # A single route leaves one door open, so this is one name there too.
+                partners = romance_partners(self.world, session) or [partner]
 
         chapter = self.world.chapter(session.world.arc)
         progression = ""
@@ -349,6 +354,8 @@ class DirectorAgent:
             is_finale=finale,
             ending_kind=ending_kind,
             ending_partner=ending_partner,
+            ending_partners=partners,
+            route_note=route_note(self.world, session),
         )
 
     def _finale_due(self, session: GameSession, decision: DecisionContext) -> bool:

@@ -57,6 +57,26 @@ there regardless of the chosen destination; the generated response handles the m
 The final run resolves established threads with a concrete image and contains no menu.
 A romance, friendship, or solo ending can each complete the story.
 
+## Who a year can be about
+
+The player settles two things at setup, and the engine holds the story to both.
+
+**The route.** A *single* route narrows: once one person is clearly ahead, that is who
+the story is about, and it is written into the save so a bad afternoon cannot quietly
+hand it to somebody else. A *harem* route never narrows — every bond that is earned is
+kept, and the finale has to resolve all of them in one scene rather than picking a
+favourite and dropping the rest.
+
+**The people.** Which of the cast a given playthrough can be romantic with is decided
+by `api/app/agents/routes.py`, once, and everything downstream reads that one answer:
+the validator will not let romance grow anywhere else, the ending cannot name anyone
+else, and the writer is handed the names with no explanation attached — a brief that
+explained itself would come back out of a character's mouth.
+
+Nobody is diminished by being outside it. A friendship is written with the same care,
+can carry the ending, and the offline narrator answers a confession with real warmth
+rather than a brush-off. What changes is only which axis moves.
+
 ## When the player types something the story cannot contain
 
 Free text is the point of the game, and a player will eventually type "I summon a

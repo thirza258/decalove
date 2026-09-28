@@ -40,7 +40,7 @@ async function opening() {
   const hook = renderHook(() => useDecalove());
   await act(async () => {});
   act(() => hook.result.current.startNewGame());
-  await act(async () => hook.result.current.submitSetup({ name: "Kai", pronouns: "they/them", tone: "warm" }));
+  await act(async () => hook.result.current.submitSetup({ name: "Kai", pronouns: "they/them", tone: "warm", route: "single" }));
   act(() => hook.result.current.finishIntro());
   return hook;
 }
@@ -64,6 +64,19 @@ describe("background web story playback", () => {
     expect(hook.result.current.state.waiting).toBe(false);
     expect(api.stepsBatch).toHaveBeenCalledTimes(2);
     expect(api.stepsBatch).toHaveBeenLastCalledWith("g1", 20, 4000, 19);
+  });
+
+  it("starts the game with the route the player chose", async () => {
+    const hook = renderHook(() => useDecalove());
+    await act(async () => {});
+    act(() => hook.result.current.startNewGame());
+    await act(async () => hook.result.current.submitSetup({
+      name: "Rin", pronouns: "she/her", tone: "gentle", route: "harem",
+    }));
+
+    expect(api.newGame).toHaveBeenCalledWith({
+      player_name: "Rin", pronouns: "she/her", tone: "gentle", route: "harem",
+    });
   });
 
   it("re-reads the engine's relationship values while the player is deciding", async () => {
