@@ -10,7 +10,7 @@
  */
 
 import { AMBIENT_LIMIT, MAX_OFFLINE_STREAK, MAX_PENDING_POLLS } from "../config";
-import type { CharacterStanding, RelationshipDelta, StepsBatchOut, StoryStep, WorldOut } from "../api/types";
+import type { CharacterStanding, RelationshipDelta, Route, StepsBatchOut, StoryStep, WorldOut } from "../api/types";
 
 export type Phase =
   | "boot"
@@ -26,6 +26,7 @@ export interface Profile {
   name: string;
   pronouns: string;
   tone: string;
+  route: Route;
 }
 
 export interface State {
@@ -81,7 +82,7 @@ export const initialState: State = {
   phase: "boot",
   world: null,
   gameId: null,
-  profile: { name: "You", pronouns: "they/them", tone: "warm" },
+  profile: { name: "You", pronouns: "they/them", tone: "warm", route: "single" },
   source: "opening",
   buffer: [],
   current: null,

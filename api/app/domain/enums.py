@@ -55,6 +55,15 @@ class Grounding(str, Enum):
     meta = "meta"
 
 
+class Route(str, Enum):
+    """How many people a playthrough can end with. Chosen by the player at setup."""
+
+    #: Once the story becomes about someone, it stays about them.
+    single = "single"
+    #: Nothing narrows down; every bond that is earned is kept.
+    harem = "harem"
+
+
 class BatchStatus(str, Enum):
     queued = "queued"
     running = "running"

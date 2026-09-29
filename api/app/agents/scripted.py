@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 
 from app.content.world import Character, World
 from app.domain.direction import Directive, Stance
+from app.agents.routes import open_routes
 from app.domain.enums import Grounding, RELATIONSHIP_AXES, StepType
 from app.domain.intent import PlayerIntent
 from app.domain.state import GameSession
@@ -701,8 +702,13 @@ class ScriptedNarrator:
         kind = directive.ending_kind or "solo"
         partner_id = directive.ending_partner
         partner = world.character(partner_id) if partner_id else None
+        # A harem route ends with everyone it earned, and this is also the fallback when
+        # the model fails on the very last run -- so all of them get their own line here,
+        # not just whoever the finale is centred on.
+        named = directive.ending_partners or ([partner_id] if partner_id else [])
+        partners = [found for found in (world.character(cid) for cid in named) if found]
 
-        present = [partner.id] if partner else list(session.world.present_characters[:1])
+        present = [person.id for person in partners] or list(session.world.present_characters[:1])
         steps: list[GeneratedStep] = [
             self._narration(
                 location.id,
@@ -712,15 +718,15 @@ class ScriptedNarrator:
             )
         ]
 
-        if partner:
-            line = FINALE_LINE.get(kind, {}).get(partner.id)
+        for person in partners:
+            line = FINALE_LINE.get(kind, {}).get(person.id)
             if line:
                 steps.append(
                     self._dialogue(
                         location.id,
-                        partner,
+                        person,
                         line,
-                        emotion=partner.default_emotion,
+                        emotion=person.default_emotion,
                         present=present,
                     )
                 )
@@ -754,8 +760,11 @@ class ScriptedNarrator:
         rng = random.Random(f"{session.id}:{len(session.steps)}:{intent.action}")
 
         family = classify(intent.action)
-        beat = BEATS.get(family, BEATS["talk"])
         target = self._pick_target(session, intent, rng)
+        if family == "confess" and target is not None and target.id not in open_routes(self.world, session):
+            # The scene still happens; it just is not the scene where that lands.
+            family = "compliment"
+        beat = BEATS.get(family, BEATS["talk"])
         destination = self._destination(session, intent, family, directive)
         stance = directive.stance_for(target.id) if (directive and target) else None
         rebuffed = bool(

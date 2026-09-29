@@ -83,6 +83,12 @@ const TONES: { value: string; label: string }[] = [
   { value: "gentle", label: "Slow. Mostly just people, talking." },
 ];
 
+/** How many people the year can end with — the engine holds the story to this. */
+const ROUTES: { value: Profile["route"]; label: string }[] = [
+  { value: "single", label: "Single route. Once it is about someone, it stays about them." },
+  { value: "harem", label: "Harem route. Nothing has to narrow down." },
+];
+
 export function SetupScreen({
   busy,
   onSubmit,
@@ -93,6 +99,7 @@ export function SetupScreen({
   const [name, setName] = useState("");
   const [pronouns, setPronouns] = useState("they/them");
   const [tone, setTone] = useState("warm");
+  const [route, setRoute] = useState<Profile["route"]>("single");
 
   return (
     <Centered>
@@ -100,7 +107,7 @@ export function SetupScreen({
         className={PANEL}
         onSubmit={(event) => {
           event.preventDefault();
-          onSubmit({ name: name.trim() || "You", pronouns, tone });
+          onSubmit({ name: name.trim() || "You", pronouns, tone, route });
         }}
       >
         <label htmlFor="vn-name" className="block text-[24px]">
@@ -138,6 +145,21 @@ export function SetupScreen({
                 key={option.value}
                 selected={tone === option.value}
                 onSelect={() => setTone(option.value)}
+              >
+                {option.label}
+              </Option>
+            ))}
+          </div>
+        </fieldset>
+
+        <fieldset className="mt-8">
+          <legend className="text-[24px]">And whoever you get close to?</legend>
+          <div className="mt-3 flex flex-col gap-2">
+            {ROUTES.map((option) => (
+              <Option
+                key={option.value}
+                selected={route === option.value}
+                onSelect={() => setRoute(option.value)}
               >
                 {option.label}
               </Option>

@@ -155,10 +155,14 @@ export interface AcceptedOut {
   status?: string | null;
 }
 
+/** How many people a playthrough can end with. */
+export type Route = "single" | "harem";
+
 export interface NewGameRequest {
   player_name: string;
   pronouns: string;
   tone: string;
+  route?: Route;
   romance_focus?: string | null;
 }
 

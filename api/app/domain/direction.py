@@ -188,6 +188,10 @@ class Directive(BaseModel):
     is_finale: bool = False
     ending_kind: str | None = None
     ending_partner: str | None = None
+    #: Everyone a harem finale has to resolve. One name, or none, in a single route.
+    ending_partners: list[str] = Field(default_factory=list)
+    #: Who this story can be about, written by ``agents.routes``. Names only.
+    route_note: str = ""
 
     def stance_for(self, character: str) -> Stance | None:
         return next((s for s in self.stances if s.character == character), None)
@@ -227,6 +231,8 @@ class Directive(BaseModel):
                 "This is a scene brief, not completed history. Follow the player's subject; "
                 "carry forward established consequences and leave room for refusal.",
             ])
+        if self.route_note:
+            lines.append(self.route_note)
         if self.style_note:
             lines.append(f"Player: {self.style_note}")
         return "\n    ".join(lines)
@@ -237,6 +243,14 @@ class Directive(BaseModel):
         lines = [
             "THIS IS THE FINAL RUN OF THE STORY. Write an ending, not another beat.",
             f"Shape: a {self.ending_kind or 'quiet'} ending, centred on {with_whom}.",
+        ]
+        if len(self.ending_partners) > 1:
+            lines.append(
+                f"This year ends with more than one of them: {', '.join(self.ending_partners)}. "
+                "Give each of them a real ending in this scene; do not resolve one by "
+                "quietly dropping the others."
+            )
+        lines += [
             "Close it. No cliffhanger, no new complication, and do NOT offer the player "
             "another decision -- the engine will not present one.",
             "Land it on a concrete image rather than a summary of how everyone feels.",

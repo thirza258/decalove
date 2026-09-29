@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.domain.enums import BatchStatus
+from app.domain.enums import BatchStatus, Route
 from app.domain.state import BatchState, CharacterState, PlayerProfile, WorldState
 from app.domain.story import StoryStep
 
@@ -19,6 +19,7 @@ class NewGameRequest(BaseModel):
     pronouns: str = Field(default="they/them", max_length=40)
     tone: str = Field(default="warm", max_length=60)
     romance_focus: str | None = None
+    route: Route = Route.single
 
 
 class ActionRequest(BaseModel):

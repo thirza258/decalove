@@ -425,6 +425,31 @@ makes the other two belt-and-braces:
 An ended game refuses new batches, and `GET /steps/next` carries the closing beat so a
 client that reconnects to a finished save can render it without a second request.
 
+### Which people, and how many
+
+Two setup choices reach the ending, and both are enforced before it.
+
+`PlayerProfile.route` is `single` or `harem`. A single route settles when one person
+leads by `ROUTE_MARGIN` past `ROUTE_LOCK`, and the engine writes `route_partner` into
+the world flags on delivery — the same moment every other state change lands. Deriving
+that lock from live state each turn would be cheaper and wrong: romance can fall, so a
+recomputed lock moves the story to somebody else after one bad line, with nothing in the
+save to say it ever was the first person. The flag is reserved, so no model can propose
+one. A harem route never settles, and `romance_partners()` returns everyone earned;
+`ending_partners` joins them into the ending marker beside `ending_partner`, which stays
+the primary so the client contract is unchanged.
+
+Which people a playthrough can be romantic with at all is one predicate in
+`agents/routes.py`. It is read in four places, because one unguarded path is the whole
+guarantee gone:
+
+| Where | What it does |
+|---|---|
+| `Validator` | zeroes the `romance` axis for anyone outside the open set — warmth is untouched, and prose cannot open a route the engine did not |
+| `choose_ending` | a romance ending needs an open partner; otherwise the same relationship ends as the friendship it was |
+| `DirectorAgent.plan` | puts the names in the brief, and nothing else: a rule with a reason attached is a rule a model will paraphrase into dialogue |
+| `ScriptedNarrator` | offline, a confession outside the set is answered as warmth rather than romance — the scene still happens |
+
 ### Which ending you get
 
 `app/agents/ending.py` ranks characters by **growth against their authored baseline**,

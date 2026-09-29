@@ -12,7 +12,7 @@ from typing import Union
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.domain.direction import DecisionContext, Directive, PlayerStyle
-from app.domain.enums import RELATIONSHIP_AXES, BatchStatus
+from app.domain.enums import RELATIONSHIP_AXES, BatchStatus, Route
 from app.domain.intent import PlayerIntent
 from app.domain.story import RelationshipDelta, StoryStep
 
@@ -91,6 +91,8 @@ class PlayerProfile(BaseModel):
     pronouns: str = "they/them"
     tone: str = "warm"
     romance_focus: str | None = None
+    #: A save written before this existed loads as a single route, which is what it was.
+    route: Route = Route.single
 
     def describe(self) -> str:
         focus = self.romance_focus or "undecided"

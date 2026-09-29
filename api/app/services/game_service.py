@@ -15,6 +15,7 @@ import uuid
 from app.agents.director import DirectorAgent
 from app.agents.memory_agent import MemoryAgent
 from app.agents.narrative import NarrativeAgent
+from app.agents.routes import ROUTE_FLAG, settling_partner
 from app.agents.visual import VisualAgent
 from app.content.world import World
 from app.domain.chronicle import MAX_ACTION_CHARS, ChronicleEntry
@@ -419,6 +420,13 @@ class GameService:
             state = session.characters.get(character_id)
             if state is not None:
                 state.apply(delta)
+
+        # Written once, by the engine, the moment one person is clearly ahead: a lock
+        # recomputed from live state would move again the next time romance dipped.
+        settled = settling_partner(self.world, session)
+        if settled:
+            session.world.flags[ROUTE_FLAG] = settled
+            log.info("game %s settled on %s", session.id, settled)
 
         for character_id, mood in step.emotion.items():
             state = session.characters.get(character_id)
