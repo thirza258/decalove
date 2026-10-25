@@ -189,6 +189,23 @@ class TestRetryPolicy:
         with pytest.raises(LLMError, match="no credits"):
             await chat().complete_json(system="s", user="u", schema_name="n", schema={})
 
+    async def test_credit_exhausted_falls_back_to_free_model(self, monkeypatch):
+        models_called = []
+
+        def handler(request, n):
+            body = json.loads(request.content)
+            model = body.get("model")
+            models_called.append(model)
+            if ":free" not in model:
+                return httpx.Response(402, text="User has run out of credits")
+            return completion({"fallback_success": True})
+
+        wire(monkeypatch, handler)
+        result = await chat().complete_json(system="s", user="u", schema_name="n", schema={})
+        assert result == {"fallback_success": True}
+        assert len(models_called) >= 2
+        assert ":free" in models_called[-1]
+
     async def test_an_empty_completion_is_an_error_not_a_crash(self, monkeypatch):
         wire(
             monkeypatch,

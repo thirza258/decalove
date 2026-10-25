@@ -14,6 +14,7 @@ import base64
 import binascii
 import json
 import logging
+import random
 import re
 from typing import Any
 
@@ -24,6 +25,60 @@ from app.llm.base import ImageError, LLMError
 log = logging.getLogger(__name__)
 
 _RETRYABLE_STATUS = {408, 409, 425, 429, 500, 502, 503, 504}
+
+FREE_OPENROUTER_MODELS = [
+    "google/gemma-4-26b-a4b-it:free",
+    "nvidia/nemotron-3.5-lightning:free",
+    "cohere/north-mini-code:free",
+    "recursive/flint-v1.0:free",
+    "xingchen-agi/xing4.0-29b-a4b:free",
+    "nvidia/nemotron-3.5-super-vl:free",
+    "dots-studio/dots-3-note-preview:free",
+    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+    "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "google/gemma-4-31b-it:free",
+]
+
+
+def get_shuffled_free_models() -> list[str]:
+    models = list(FREE_OPENROUTER_MODELS)
+    random.shuffle(models)
+    return models
+
+
+def is_credit_exhausted_error(exc_or_status: Any, message: str = "") -> bool:
+    code = None
+    if isinstance(exc_or_status, int):
+        code = exc_or_status
+    else:
+        for attr in ("status_code", "http_status", "code"):
+            val = getattr(exc_or_status, attr, None)
+            if isinstance(val, int):
+                code = val
+                break
+        if code is None and hasattr(exc_or_status, "response"):
+            resp = getattr(exc_or_status, "response", None)
+            code = getattr(resp, "status_code", None)
+
+    msg_str = f"{exc_or_status} {message}".lower()
+    if code == 402:
+        return True
+
+    if "rate limit" in msg_str and not any(k in msg_str for k in ("credit", "payment", "balance")):
+        return False
+
+    credit_keywords = (
+        "402",
+        "credit",
+        "payment required",
+        "run out of credits",
+        "insufficient balance",
+        "insufficient credits",
+        "insufficient_quota",
+        "exceeded your current quota",
+        "out of credit",
+    )
+    return any(kw in msg_str for kw in credit_keywords)
 
 
 def _unfence(text: str) -> str:
@@ -255,7 +310,22 @@ class OpenRouterChat(_OpenRouterBase):
         if self._require_parameters:
             payload["provider"] = {"require_parameters": True}
 
-        raw = await self._complete_text(payload)
+        try:
+            raw = await self._complete_text(payload)
+        except Exception as exc:
+            if is_credit_exhausted_error(exc):
+                log.warning("OpenRouter credits exhausted (%s), falling back to shuffled free models", exc)
+                for free_model in get_shuffled_free_models():
+                    try:
+                        log.info("Retrying complete_json with free fallback model: %s", free_model)
+                        fb_payload = dict(payload)
+                        fb_payload["model"] = free_model
+                        raw = await self._complete_text(fb_payload)
+                        return self._parse(raw)
+                    except Exception as fb_exc:
+                        log.warning("Free model %s failed: %s", free_model, fb_exc)
+                        continue
+            raise
         try:
             return self._parse(raw)
         except LLMError as first_error:
