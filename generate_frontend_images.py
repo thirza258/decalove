@@ -353,12 +353,75 @@ def sync_file_to_game(src_path: Path, rel_subpath: str):
     shutil.copy2(src_path, dest_path)
 
 
-def upload_single_to_minio(file_path: Path, object_key: str, bucket_name="decalove-assets"):
+_minio_client = None
+
+
+def get_minio_config(args=None):
+    endpoint = "localhost:4530"
+    access_key = "minioadmin"
+    secret_key = "minioadmin"
+    secure = False
+    bucket_name = "decalove-assets"
+
+    try:
+        api_dir = str(ROOT / "api")
+        if api_dir not in sys.path:
+            sys.path.insert(0, api_dir)
+        from app.config import settings
+        endpoint = settings.MINIO_ENDPOINT
+        access_key = settings.MINIO_ACCESS_KEY
+        secret_key = settings.MINIO_SECRET_KEY
+        secure = settings.MINIO_SECURE
+        bucket_name = settings.MINIO_BUCKET_NAME
+    except Exception:
+        pass
+
+    endpoint = os.environ.get("MINIO_ENDPOINT", endpoint)
+    access_key = os.environ.get("MINIO_ACCESS_KEY", access_key)
+    secret_key = os.environ.get("MINIO_SECRET_KEY", secret_key)
+    if "MINIO_SECURE" in os.environ:
+        secure = os.environ["MINIO_SECURE"].lower() in ("true", "1", "yes")
+    bucket_name = os.environ.get("MINIO_BUCKET_NAME", bucket_name)
+
+    if args:
+        if getattr(args, "endpoint", None):
+            endpoint = args.endpoint
+        if getattr(args, "bucket", None):
+            bucket_name = args.bucket
+
+    return {
+        "endpoint": endpoint,
+        "access_key": access_key,
+        "secret_key": secret_key,
+        "secure": secure,
+        "bucket_name": bucket_name,
+    }
+
+
+def get_minio_client(config=None):
+    global _minio_client
+    if _minio_client is None or config is not None:
+        cfg = config or get_minio_config()
+        client = Minio(
+            cfg["endpoint"],
+            access_key=cfg["access_key"],
+            secret_key=cfg["secret_key"],
+            secure=cfg["secure"],
+        )
+        if config is None:
+            _minio_client = client
+        return client
+    return _minio_client
+
+
+def upload_single_to_minio(file_path: Path, object_key: str, bucket_name: str | None = None):
     """Immediately upload a generated image to MinIO so it is live right away."""
     try:
-        client = Minio("127.0.0.1:9000", access_key="minioadmin", secret_key="minioadmin", secure=False)
+        cfg = get_minio_config()
+        target_bucket = bucket_name or cfg["bucket_name"]
+        client = get_minio_client(cfg)
         content_type = "image/jpeg" if str(file_path).endswith(".jpg") else "image/png"
-        client.fput_object(bucket_name, object_key, str(file_path), content_type=content_type)
+        client.fput_object(target_bucket, object_key, str(file_path), content_type=content_type)
         print(f"           Uploaded to MinIO: {object_key}")
     except Exception as e:
         print(f"           MinIO upload warning for {object_key}: {e}")
@@ -544,26 +607,23 @@ def generate_previews(pipe, limit=0, steps=DEFAULT_STEPS, force=False):
     return generated_count
 
 
-def upload_to_minio(source_dir, bucket_name="decalove-assets", force_upload=False):
+def upload_to_minio(source_dir, bucket_name=None, force_upload=False, endpoint=None):
     """Upload all images from source_dir to MinIO decalove-assets bucket."""
-    print(f"\n--- Uploading images from {source_dir} to MinIO ({bucket_name}) ---")
-    
-    endpoint = "127.0.0.1:9000"
-    access_key = "minioadmin"
-    secret_key = "minioadmin"
-    secure = False
+    cfg = get_minio_config()
+    if bucket_name:
+        cfg["bucket_name"] = bucket_name
+    if endpoint:
+        cfg["endpoint"] = endpoint
+
+    target_bucket = cfg["bucket_name"]
+    print(f"\n--- Uploading images from {source_dir} to MinIO ({cfg['endpoint']} / {target_bucket}) ---")
     
     try:
-        client = Minio(
-            endpoint,
-            access_key=access_key,
-            secret_key=secret_key,
-            secure=secure
-        )
+        client = get_minio_client(cfg)
         
-        if not client.bucket_exists(bucket_name):
-            client.make_bucket(bucket_name)
-            print(f"Created bucket '{bucket_name}'")
+        if not client.bucket_exists(target_bucket):
+            client.make_bucket(target_bucket)
+            print(f"Created bucket '{target_bucket}'")
             
         source_path = Path(source_dir)
         if not source_path.exists():
@@ -580,7 +640,7 @@ def upload_to_minio(source_dir, bucket_name="decalove-assets", force_upload=Fals
                 
                 if not force_upload:
                     try:
-                        client.stat_object(bucket_name, object_key)
+                        client.stat_object(target_bucket, object_key)
                         skipped += 1
                         continue
                     except Exception:
@@ -588,7 +648,7 @@ def upload_to_minio(source_dir, bucket_name="decalove-assets", force_upload=Fals
                 
                 print(f"  Uploading {object_key}...")
                 content_type = "image/jpeg" if ext == "*.jpg" else "image/png"
-                client.fput_object(bucket_name, object_key, str(file_path), content_type=content_type)
+                client.fput_object(target_bucket, object_key, str(file_path), content_type=content_type)
                 uploaded += 1
                 
         print(f"MinIO Upload complete! Uploaded: {uploaded}, Already in MinIO: {skipped}")
@@ -600,6 +660,8 @@ def main():
     parser = argparse.ArgumentParser(description="Decalove All Locations & Characters Image Generator/Uploader")
     parser.add_argument("--upload-only", action="store_true", help="Skip generation, just upload to MinIO")
     parser.add_argument("--source", type=str, help="Source directory for images (default: frontend/public/images)")
+    parser.add_argument("--endpoint", type=str, default=None, help="MinIO endpoint host:port (default: from api/.env or localhost:4530)")
+    parser.add_argument("--bucket", type=str, default=None, help="MinIO bucket name (default: decalove-assets)")
     parser.add_argument("--category", choices=["all", "backgrounds", "characters", "previews"], default="all")
     parser.add_argument("--location", type=str, default=None, help="Filter to specific location (e.g. school_gate, park, train_station, player_home)")
     parser.add_argument("--character", type=str, default=None, help="Filter to specific character (aiko, haruto, mika, ren)")
@@ -657,7 +719,7 @@ def main():
         print(f"Generation phase finished! Total images on disk: {total_png + total_jpg}")
         print(f"{'=' * 65}")
 
-    upload_to_minio(source_dir, force_upload=args.force_upload)
+    upload_to_minio(source_dir, bucket_name=args.bucket, force_upload=args.force_upload, endpoint=args.endpoint)
 
 
 if __name__ == "__main__":
