@@ -1,0 +1,18 @@
+{
+  "resource": "https://decalove.nevatal.id",
+  "authorization_servers": [
+    "https://decalove.nevatal.id"
+  ],
+  "scopes_supported": [
+    "read",
+    "write"
+  ],
+  "bearer_methods_supported": [
+    "header"
+  ],
+  "resource_documentation": "https://decalove.nevatal.id/auth.md",
+  "agent_auth": {
+    "skill": "https://decalove.nevatal.id/auth.md",
+    "register_uri": "https://decalove.nevatal.id/api/agent/register"
+  }
+}

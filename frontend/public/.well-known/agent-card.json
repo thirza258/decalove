@@ -1,0 +1,40 @@
+{
+  "name": "Decalove Agent",
+  "description": "An AI-directed visual novel: the story is written for you as you play, with persistent characters, relationships and memories.",
+  "url": "https://decalove.nevatal.id",
+  "provider": {
+    "name": "Nevatal",
+    "url": "https://decalove.nevatal.id"
+  },
+  "version": "1.0.0",
+  "protocolVersion": "0.3.0",
+  "preferredTransport": "JSONRPC",
+  "supportedInterfaces": [
+    {
+      "url": "https://decalove.nevatal.id/api",
+      "protocolBinding": "JSONRPC",
+      "protocolVersion": "0.3.0"
+    }
+  ],
+  "capabilities": {
+    "streaming": false,
+    "pushNotifications": false
+  },
+  "defaultInputModes": [
+    "text/plain"
+  ],
+  "defaultOutputModes": [
+    "text/plain"
+  ],
+  "skills": [
+    {
+      "id": "continue-story",
+      "name": "Continue the Story",
+      "description": "Advance a visual novel scene from a player choice or free-text action."
+    }
+  ],
+  "authentication": {
+    "type": "oauth2",
+    "discovery_url": "https://decalove.nevatal.id/.well-known/oauth-authorization-server"
+  }
+}

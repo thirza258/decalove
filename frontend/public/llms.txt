@@ -1,0 +1,11 @@
+# Decalove
+
+> An AI-directed visual novel: the story is written for you as you play, with persistent characters, relationships and memories.
+
+## Endpoints
+- Homepage: https://decalove.nevatal.id/
+- API: https://decalove.nevatal.id/api/
+- API Catalog: https://decalove.nevatal.id/.well-known/api-catalog
+- Agent Card: https://decalove.nevatal.id/.well-known/agent-card.json
+- AI Catalog: https://decalove.nevatal.id/.well-known/ai-catalog.json
+- Authentication Guide: https://decalove.nevatal.id/auth.md

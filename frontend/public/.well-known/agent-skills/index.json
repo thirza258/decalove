@@ -1,0 +1,11 @@
+{
+  "$schema": "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
+  "skills": [
+    {
+      "name": "continue-story",
+      "type": "skill-md",
+      "description": "Advance a visual novel scene from a player choice or free-text action.",
+      "url": "https://decalove.nevatal.id/.well-known/agent-skills/continue-story/SKILL.md"
+    }
+  ]
+}

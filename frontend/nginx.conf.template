@@ -2,10 +2,17 @@
 # substituted -- nginx's own $uri, $host and friends are not environment variables, so
 # they survive untouched.
 
+map $http_accept $want_markdown {
+    default 0;
+    "~*text/markdown" 1;
+}
+
 server {
     listen ${DECALOVE_PORT};
     server_name _;
     root /usr/share/nginx/html;
+
+    add_header Link '</.well-known/api-catalog>; rel="api-catalog", </auth.md>; rel="describedby"; type="text/markdown", </.well-known/agent-card.json>; rel="a2a-agent-card", </.well-known/ai-catalog.json>; rel="ai-catalog"' always;
 
     # This server runs behind something that terminates TLS, so it must never put its
     # own address in a redirect. nginx answers a directory-shaped URL with a 301 to the
@@ -117,6 +124,37 @@ server {
 
     location = /index.html {
         add_header Cache-Control "no-store" always;
+        add_header Link '</.well-known/api-catalog>; rel="api-catalog", </auth.md>; rel="describedby"; type="text/markdown", </.well-known/agent-card.json>; rel="a2a-agent-card", </.well-known/ai-catalog.json>; rel="ai-catalog"' always;
+    }
+
+    # ── Agent discovery ────────────────────────────────────────────────
+    location = /llms.txt {
+        types { text/markdown txt; }
+        default_type text/markdown;
+        access_log off;
+    }
+
+    location = /auth.md {
+        default_type text/markdown;
+        access_log off;
+    }
+
+    location ^~ /.well-known/ {
+        default_type application/json;
+        add_header Access-Control-Allow-Origin "*" always;
+        add_header Cache-Control "public, max-age=3600" always;
+    }
+
+    location = /.well-known/api-catalog {
+        default_type application/linkset+json;
+    }
+
+    # Serve llms.txt when an agent asks for markdown at the root.
+    location = / {
+        if ($want_markdown) {
+            rewrite ^ /llms.txt last;
+        }
+        try_files /index.html =404;
     }
 
     # Content-hashed by Vite, so the name changes whenever the bytes do.

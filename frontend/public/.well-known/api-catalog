@@ -1,0 +1,25 @@
+{
+  "linkset": [
+    {
+      "anchor": "https://decalove.nevatal.id/api",
+      "service-desc": [
+        {
+          "href": "https://decalove.nevatal.id/api/",
+          "type": "application/json"
+        }
+      ],
+      "service-doc": [
+        {
+          "href": "https://decalove.nevatal.id/auth.md",
+          "type": "text/markdown"
+        }
+      ],
+      "status": [
+        {
+          "href": "https://decalove.nevatal.id/api/",
+          "type": "application/json"
+        }
+      ]
+    }
+  ]
+}

@@ -3,6 +3,8 @@
 
 User-agent: *
 Content-Signal: ai-train=yes, search=yes, ai-input=yes
+Host: https://decalove.nevatal.id
+Agentmap: https://decalove.nevatal.id/.well-known/ai-catalog.json
 Allow: /
 Disallow: /api/
 

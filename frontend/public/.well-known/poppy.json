@@ -1,0 +1,46 @@
+{
+  "protocol_version": "0.1",
+  "organization": {
+    "name": "Nevatal",
+    "domain": "decalove.nevatal.id"
+  },
+  "auth": {
+    "issuer": "https://decalove.nevatal.id",
+    "direct": {
+      "scopes": [
+        "poppy:read",
+        "poppy:write"
+      ]
+    },
+    "device": {
+      "scopes": [
+        "poppy:read",
+        "poppy:write"
+      ]
+    }
+  },
+  "agent": {
+    "protocols": [
+      {
+        "type": "poppy",
+        "endpoint": "https://decalove.nevatal.id/api/"
+      }
+    ]
+  },
+  "apis": [
+    {
+      "type": "openapi",
+      "url": "https://decalove.nevatal.id/api/",
+      "description": "Decalove API"
+    },
+    {
+      "type": "mcp",
+      "url": "https://decalove.nevatal.id/mcp",
+      "description": "Decalove MCP server"
+    }
+  ],
+  "web": {
+    "browser_session_endpoint": "https://decalove.nevatal.id/"
+  },
+  "extensions": {}
+}

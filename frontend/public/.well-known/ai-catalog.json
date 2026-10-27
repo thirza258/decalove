@@ -1,0 +1,28 @@
+{
+  "specVersion": "1.0",
+  "host": {
+    "displayName": "Decalove",
+    "identifier": "did:web:decalove.nevatal.id"
+  },
+  "entries": [
+    {
+      "identifier": "urn:air:decalove.nevatal.id:api:site",
+      "displayName": "Decalove API",
+      "type": "application/json",
+      "url": "https://decalove.nevatal.id/api/",
+      "representativeQueries": [
+        "what does Decalove do",
+        "get data from Decalove"
+      ]
+    },
+    {
+      "identifier": "urn:air:decalove.nevatal.id:server:mcp",
+      "displayName": "Decalove MCP Server",
+      "type": "application/mcp-server-card+json",
+      "url": "https://decalove.nevatal.id/.well-known/mcp/server-card.json",
+      "representativeQueries": [
+        "query Decalove"
+      ]
+    }
+  ]
+}
