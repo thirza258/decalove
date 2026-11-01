@@ -204,6 +204,7 @@ export function LandingPage({ onPlay }: LandingPageProps) {
         <div>
           <a className="landing-footer-brand" href="#/" onClick={(event) => jumpToSection(event, "landing-top")}>Decalove</a>
           <span>Make room for your story.</span>
+          <p style={{ fontSize: "11px", color: "var(--landing-muted)", margin: "4px 0 0" }}>This project is under nevatal.id for educational purposes.</p>
         </div>
         <nav aria-label="Explore Decalove">
           <button type="button" onClick={onPlay}>The game</button>

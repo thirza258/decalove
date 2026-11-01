@@ -240,6 +240,7 @@ export function LegalPage({ initialTab = "privacy", onHome }: LegalPageProps) {
         <div>
           <a className="landing-footer-brand" href="#/" onClick={(e) => { e.preventDefault(); onHome(); }}>Decalove</a>
           <span>Make room for your story. · Contact: nevatalapp@gmail.com</span>
+          <p style={{ fontSize: "11px", color: "var(--landing-muted)", margin: "4px 0 0" }}>This project is under nevatal.id for educational purposes.</p>
         </div>
       </footer>
     </div>
