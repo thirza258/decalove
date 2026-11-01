@@ -209,6 +209,8 @@ export function LandingPage({ onPlay }: LandingPageProps) {
           <button type="button" onClick={onPlay}>The game</button>
           <a href="#/courses">Courses</a>
           <a href="#/studio">Writing studio</a>
+          <a href="#/privacy">Privacy</a>
+          <a href="#/terms">Terms</a>
         </nav>
       </footer>
     </div>

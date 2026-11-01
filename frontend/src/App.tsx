@@ -11,6 +11,7 @@ import { ChoiceMenu } from "./components/ChoiceMenu";
 import { DialogueBox } from "./components/DialogueBox";
 import { FreeTextInput } from "./components/FreeTextInput";
 import { LandingPage } from "./components/LandingPage";
+import { LegalPage } from "./components/LegalPage";
 import {
   EndingOverlay,
   GenerationErrorModal,
@@ -32,8 +33,12 @@ const CoursesPage = lazy(() => import("./components/CoursesPage"));
 const WritingStudio = lazy(() => import("./components/WritingStudio"));
 
 function currentPage() {
-  const page = window.location.hash.slice(2).split("?")[0];
-  return ["play", "courses", "studio"].includes(page) ? page : "home";
+  const hash = window.location.hash.replace(/^#\/?/, '').split("?")[0];
+  if (["privacy", "terms"].includes(hash)) return hash;
+  if (["play", "courses", "studio"].includes(hash)) return hash;
+  const path = window.location.pathname.replace(/^\//, '').split("?")[0];
+  if (["privacy", "terms"].includes(path)) return path;
+  return "home";
 }
 
 function currentWorkspace() {
@@ -62,6 +67,9 @@ export default function App() {
     return () => window.removeEventListener("hashchange", navigate);
   }, []);
   if (page === "play") return <GamePlayer onHome={() => { window.location.hash = "/"; }} />;
+  if (page === "privacy" || page === "terms") {
+    return <LegalPage initialTab={page} onHome={() => { window.location.hash = "/"; }} />;
+  }
   if (page === "home") return <LandingPage onPlay={() => { window.location.hash = "/play"; }} />;
   return (
     <Suspense fallback={<div className="writing-app writing-loading" role="status">Opening the writing room…</div>}>
