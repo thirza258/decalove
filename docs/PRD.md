@@ -1105,3 +1105,23 @@ The second principle, from the original brief, still defines the product:
 
 > **An AI agent continuously directs a visual novel around the player's actions while
 > the player experiences it as a seamless, pre-rendered narrative.**
+
+---
+
+## 18. Media Storage, Autonomous Agent Discovery & Monetization
+
+### 18.1 Production MinIO Object Storage
+* **Deployed Media Storage:** Image generation artifacts and character portraits are uploaded directly to configured MinIO S3 object storage based on environment deployment settings (`MINIO_ENDPOINT`, `MINIO_BUCKET`), replacing ephemeral container local paths with permanent signed URLs.
+
+### 18.2 Writing Studio UI & Prompt Safeguards
+* **Interactive Writing Studio:** Enhanced creative interface for authors and players to guide character development and scene staging.
+* **Prompt Boundary Safeguards:** Content boundary validation preventing jailbreaks and narrative derailment while maintaining high dramatic freedom.
+
+### 18.3 Autonomous Agent Readiness & Machine-Readable Discovery
+* **Agent Readiness Discovery (ARD):** Exposes `/.well-known/ard.json` and `/poppy.json` documenting game engine endpoints and beat generation APIs.
+* **LLMs Documentation:** Serves `/llms.txt` and `/llms-full.txt` providing context for autonomous storytelling agents.
+* **Markdown Content Negotiation:** Returns structured markdown for API and agent consumers using `Accept: text/markdown`.
+
+### 18.4 Multi-Tier Monetization & Free Model Fallback
+* **Ad Network Integration:** Monetag meta tags and container scripts, Google AdSense ad units backed by an authoritative `ads.txt`.
+* **Shuffled OpenRouter Free Model Fallback:** Automatic zero-cost fallback rotating across free OpenRouter models (Gemini Flash, Llama 3) whenever API balance is exhausted.

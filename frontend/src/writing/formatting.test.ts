@@ -58,9 +58,27 @@ it("every course lesson has a complete narrative workshop and a concrete deliver
   expect(lessons).toHaveLength(18);
   for (const lesson of lessons) {
     const workshop = WORKSHOPS[lesson.id];
-    expect(workshop.reading.length).toBeGreaterThanOrEqual(3);
+    expect(workshop.reading.length).toBeGreaterThanOrEqual(4);
     expect(workshop.practice.length).toBeGreaterThanOrEqual(5);
-    expect(workshop.annotations.length).toBeGreaterThanOrEqual(3);
+    expect(workshop.annotations.length).toBeGreaterThanOrEqual(4);
     expect(workshop.deliverable.length).toBeGreaterThan(40);
+  }
+});
+
+it("every course lesson has multiple detailed worked examples across diverse scenarios", () => {
+  const lessons = COURSES.flatMap((c) => c.lessons);
+  expect(lessons).toHaveLength(18);
+  for (const lesson of lessons) {
+    expect(lesson.before.length).toBeGreaterThan(25);
+    expect(lesson.after.length).toBeGreaterThan(40);
+    expect(lesson.explanation.length).toBeGreaterThan(40);
+    expect(lesson.examples.length).toBeGreaterThanOrEqual(2);
+    for (const ex of lesson.examples) {
+      expect(ex.title.length).toBeGreaterThan(5);
+      expect(ex.before.length).toBeGreaterThan(25);
+      expect(ex.after.length).toBeGreaterThan(40);
+      expect(ex.explanation.length).toBeGreaterThan(40);
+      expect(ex.breakdown && ex.breakdown.length).toBeGreaterThanOrEqual(2);
+    }
   }
 });

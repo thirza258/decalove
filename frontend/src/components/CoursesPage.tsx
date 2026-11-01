@@ -50,11 +50,51 @@ export default function CoursesPage({ onPractice }: { onPractice: (prompt: strin
             {workshop.reading.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
             <h2>Try this approach</h2>
             <ol className="lesson-steps">{lesson.steps.map((step) => <li key={step}>{step}</li>)}</ol>
-            <div className="lesson-examples">
-              <section><h3>A starting point</h3><p>{lesson.before}</p></section>
-              <section><h3>A more specific version</h3><p>{lesson.after}</p></section>
-            </div>
-            <p>{lesson.explanation}</p>
+
+            <section className="lesson-examples-section">
+              <h2>Worked craft examples</h2>
+              <p className="lesson-examples-intro">
+                Study how flat, generic starting drafts transform into dynamic, grounded narrative across different storytelling scenarios and genres.
+              </p>
+
+              <div className="lesson-example-card">
+                <div className="example-header">
+                  <span className="example-tag">Example 1</span>
+                  <h3>{lesson.exampleTitle || "Core technique"}</h3>
+                </div>
+                <div className="lesson-examples">
+                  <section><h3>A starting point</h3><p>{lesson.before}</p></section>
+                  <section><h3>A more specific version</h3><p>{lesson.after}</p></section>
+                </div>
+                <p className="example-explanation">{lesson.explanation}</p>
+              </div>
+
+              {lesson.examples?.map((ex, i) => (
+                <div key={ex.title || i} className="lesson-example-card">
+                  <div className="example-header">
+                    <span className="example-tag">Example {i + 2}</span>
+                    <h3>{ex.title}</h3>
+                  </div>
+                  {ex.context && <p className="example-context"><strong>Scenario:</strong> {ex.context}</p>}
+                  <div className="lesson-examples">
+                    <section><h3>A starting point</h3><p>{ex.before}</p></section>
+                    <section><h3>A more specific version</h3><p>{ex.after}</p></section>
+                  </div>
+                  <p className="example-explanation">{ex.explanation}</p>
+                  {ex.breakdown && ex.breakdown.length > 0 && (
+                    <div className="example-breakdown">
+                      <h4>Key craft moves:</h4>
+                      <ul>
+                        {ex.breakdown.map((item, bIdx) => (
+                          <li key={bIdx}>{item}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </section>
+
             <h2>Read the example closely</h2>
             <ul className="lesson-annotations">{workshop.annotations.map((note) => <li key={note}>{note}</li>)}</ul>
             <section className="lesson-pitfalls"><h2>Watch for these habits</h2><ul>{workshop.pitfalls.map((pitfall) => <li key={pitfall}>{pitfall}</li>)}</ul></section>

@@ -7,11 +7,13 @@ novel; writing a draft never changes a game, character relationship, or ending.
 ## Learn and practise
 
 Six courses cover story structure, dialogue, theme, book planning, narration, and
-revision. Each of the 18 lessons includes an explanation, deeper reading, an annotated
-before/after example, common mistakes, a five-pass exercise, a concrete deliverable,
-a review checklist, and a targeted AI revision brief. Practice notes and completion
-progress save with the workspace. **Practice in the studio** creates a new document
-with the exercise, craft guidance, and the learner's notes in its instructions.
+revision. Each of the 18 lessons includes extensive craft concepts, deep background
+readings, multiple worked before/after examples spanning diverse genres and narrative
+scenarios, line-by-line diagnostic annotations, common pitfalls and habits to avoid,
+a structured five-pass exercise, a concrete deliverable, a review checklist, and a
+targeted AI revision brief. Practice notes and completion progress save with the
+workspace. **Practice in the studio** creates a new document with the exercise, craft
+guidance, and the learner's notes in its instructions.
 
 The final project develops a 50-line scene through an encounter, resistance, a change
 in understanding, a costly choice, and its consequence. Its review rubric checks
