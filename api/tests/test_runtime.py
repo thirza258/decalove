@@ -189,6 +189,112 @@ class TestRuntimeAssembly:
         assert chat._client is None
         assert not [t for t in runtime.generation._tasks if not t.done()]
 
+    async def test_the_quality_judge_uses_its_own_model(self, tmp_path, mongo_down, minio_down):
+        runtime = await build_runtime(settings(
+            OPENROUTER_API_KEY="sk-x",
+            LOCAL_ASSET_DIR=str(tmp_path),
+            QUALITY_EVALUATION_ENABLED=True,
+            QUALITY_JUDGE_ENABLED=True,
+            QUALITY_JUDGE_MODEL="judge/free-model:free",
+        ))
+        try:
+            assert runtime.quality_judge is not None
+            assert runtime.quality_judge is not runtime.chat
+            assert runtime.quality_judge.model == "judge/free-model:free"
+            assert runtime.generation.narrative.quality.judge is runtime.quality_judge
+            assert runtime.describe()["quality_judge"] == "judge/free-model:free"
+        finally:
+            await runtime.close()
+
+    async def test_discovered_free_models_are_shuffled_into_the_fallback_chain(
+        self, tmp_path, mongo_down, minio_down, monkeypatch
+    ):
+        discovered = [
+            "discovered/one:free", "discovered/two:free",
+            "discovered/three:free", "discovered/four:free",
+        ]
+
+        async def fake_discovery(**kwargs):
+            return list(discovered)
+
+        monkeypatch.setattr("app.runtime.discover_free_models", fake_discovery)
+        runtime = await build_runtime(settings(
+            WEB_MODE=True, OPENROUTER_API_KEY="sk-x",
+            OPENROUTER_MODEL="verified/primary:free",
+            OPENROUTER_FALLBACK_MODELS="",
+            OPENROUTER_FALLBACK_MODEL_LIMIT=3,
+            LOCAL_ASSET_DIR=str(tmp_path),
+        ))
+        try:
+            chain = runtime.describe()["model_chain"]
+            assert chain[0] == "verified/primary:free"
+            assert len(chain) == 4
+            assert set(chain[1:]) <= set(discovered)
+            assert [chat.model for chat in runtime.generation.narrative.fallback_chats] == chain[1:]
+        finally:
+            await runtime.close()
+
+    async def test_an_auto_primary_prefers_a_verified_live_model(
+        self, tmp_path, mongo_down, minio_down, monkeypatch
+    ):
+        from app.llm.openrouter import VERIFIED_FREE_MODELS
+
+        async def fake_discovery(**kwargs):
+            return ["random/one:free", VERIFIED_FREE_MODELS[0], "random/two:free"]
+
+        monkeypatch.setattr("app.runtime.discover_free_models", fake_discovery)
+        runtime = await build_runtime(settings(
+            WEB_MODE=True, OPENROUTER_API_KEY="sk-x",
+            OPENROUTER_MODEL="auto",
+            LOCAL_ASSET_DIR=str(tmp_path),
+        ))
+        try:
+            assert runtime.describe()["model_chain"][0] == VERIFIED_FREE_MODELS[0]
+        finally:
+            await runtime.close()
+
+    async def test_discovery_failure_falls_back_to_static_ids(
+        self, tmp_path, mongo_down, minio_down, monkeypatch
+    ):
+        from app.llm.openrouter import FREE_OPENROUTER_MODELS
+
+        async def no_catalogue(**kwargs):
+            return []
+
+        monkeypatch.setattr("app.runtime.discover_free_models", no_catalogue)
+        runtime = await build_runtime(settings(
+            WEB_MODE=True, OPENROUTER_API_KEY="sk-x",
+            OPENROUTER_MODEL="verified/primary:free",
+            OPENROUTER_FALLBACK_MODELS="",
+            OPENROUTER_FALLBACK_MODEL_LIMIT=3,
+            LOCAL_ASSET_DIR=str(tmp_path),
+        ))
+        try:
+            chain = runtime.describe()["model_chain"]
+            assert chain[0] == "verified/primary:free"
+            assert chain[1:] == list(FREE_OPENROUTER_MODELS)[:3]
+        finally:
+            await runtime.close()
+
+    async def test_explicit_alternates_come_before_discovered_ones(
+        self, tmp_path, mongo_down, minio_down, monkeypatch
+    ):
+        async def fake_discovery(**kwargs):
+            return ["discovered/one:free", "discovered/two:free"]
+
+        monkeypatch.setattr("app.runtime.discover_free_models", fake_discovery)
+        runtime = await build_runtime(settings(
+            WEB_MODE=True, OPENROUTER_API_KEY="sk-x",
+            OPENROUTER_MODEL="verified/primary:free",
+            OPENROUTER_FALLBACK_MODELS="explicit/one:free",
+            OPENROUTER_FALLBACK_MODEL_LIMIT=3,
+            LOCAL_ASSET_DIR=str(tmp_path),
+        ))
+        try:
+            assert runtime.describe()["model_chain"][1] == "explicit/one:free"
+        finally:
+            await runtime.close()
+
     async def test_the_engine_shares_one_narrative_agent(self, tmp_path, mongo_down, minio_down):
         """Patching it in one place must affect the whole engine."""
         runtime = await build_runtime(settings(LOCAL_ASSET_DIR=str(tmp_path)))

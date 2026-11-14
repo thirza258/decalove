@@ -19,7 +19,7 @@ from app.agents.safety import SafetyFilter
 from app.content.world import World
 from app.domain.direction import DecisionContext, DecisionKind, Directive, Pacing, Stance
 from app.domain.enums import TIMES_OF_DAY, Risk, StepType
-from app.domain.intent import PlayerIntent
+from app.domain.intent import IntentComponent, PlayerIntent
 from app.domain.state import CharacterState, GameSession
 from app.llm.base import ChatProvider, LLMError
 from app.llm.schema import strict_schema
@@ -75,6 +75,14 @@ _RISK_TENSION = {Risk.low: 20, Risk.medium: 45, Risk.high: 70}
 #: Asking someone to come along names a place and a movement verb too, so it has to be
 #: excluded explicitly -- "walk home with me" is an invitation, "let's go home" is a move.
 _INVITATION = re.compile(r"\b(with me|with you|come with|join me|join us|together)\b", re.IGNORECASE)
+
+#: Clauses that signal a second, independent attempt. Deliberately conservative: a
+#: bare "and" joins nouns and verbs far more often than it joins two intentions, so it
+#: only splits when it is followed by a new subject.
+_CLAUSE_SPLIT = re.compile(
+    r"\s*(?:;|\bbut\b|\bwhile\b|\balso\b|\bthen\b|\band\s+(?:i|i'll|i'd|also|then)\b)\s*",
+    re.IGNORECASE,
+)
 
 #: Movement verbs. Paired with a named location these beat the keyword lexicon, because
 #: pattern ordering cannot tell "let's go" (an invitation) from "let's go home" (a move)
@@ -204,7 +212,10 @@ class DirectorAgent:
             user=build_intent_prompt(self.world, session, text),
             schema_name="player_intent",
             schema=strict_schema(PlayerIntent),
-            max_tokens=400,
+            # Generous for a small schema: free reasoning models spend tokens before
+            # they emit content, and an empty completion is indistinguishable from a
+            # failed parse.
+            max_tokens=3000,
             temperature=self.temperature,
         )
         payload.pop("raw", None)
@@ -212,18 +223,103 @@ class DirectorAgent:
         # same way on a retry, and a model that decides the world can bend will bend it.
         payload.pop("grounding", None)
         intent = PlayerIntent.model_validate({**payload, "raw": text})
-        intent.target = self.world.resolve_character(intent.target)
-        if not intent.action.strip():
-            intent.action = "talk_to"
+        self._normalise_intent(intent, text)
         # A second look at the attempt the model named, for phrasing the patterns missed.
         named = classify_action(intent.action)
         intent.grounding = grounding if grounding is not Grounding.in_world else named
         return intent
 
-    def parse_keywords(self, session: GameSession, text: str) -> PlayerIntent:
-        """Deterministic parser. Also the fallback when the model call fails."""
-        lowered = text.lower()
+    def _normalise_intent(self, intent: PlayerIntent, text: str) -> None:
+        """Resolve model-supplied targets and make the component list trustworthy.
 
+        The model may return a display name, an unknown id, or components that disagree
+        with the primary action. The engine resolves what it can and drops what it
+        cannot; it never invents a target.
+        """
+        intent.target = self.world.resolve_character(intent.target)
+        if not intent.action.strip():
+            intent.action = "talk_to"
+
+        components: list[IntentComponent] = []
+        for component in intent.components:
+            target = self.world.resolve_character(component.target)
+            action = (component.action or "").strip().lower() or intent.action
+            if component.target and target is None:
+                # The model named a target this world does not contain.
+                continue
+            components.append(
+                IntentComponent(
+                    action=action,
+                    target=target,
+                    emotion=component.emotion,
+                    intensity=max(0.0, min(1.0, component.intensity)),
+                    priority=max(1, component.priority),
+                    confidence=max(0.0, min(1.0, component.confidence)),
+                    quote=(component.quote or text)[:300],
+                )
+            )
+
+        if not components or not (
+            components[0].action == intent.action and components[0].target == intent.target
+        ):
+            components.insert(
+                0,
+                IntentComponent(
+                    action=intent.action,
+                    target=intent.target,
+                    emotion=intent.emotion,
+                    priority=1,
+                    confidence=intent.confidence,
+                    quote=text[:300],
+                ),
+            )
+        for index, component in enumerate(components):
+            component.priority = index + 1
+        intent.components = components
+        intent.overall_emotion = intent.overall_emotion or intent.emotion
+        if not 0.0 <= intent.confidence <= 1.0:
+            intent.confidence = max(0.0, min(1.0, intent.confidence))
+
+    def parse_keywords(self, session: GameSession, text: str) -> PlayerIntent:
+        """Deterministic parser. Also the fallback when the model call fails.
+
+        Compound input is split into components, each with its own target, so
+        "apologise to Aiko, but defend Ren" reaches the writer as two attempts rather
+        than whichever one the lexicon happened to match first.
+        """
+        action, target, emotion, risk = self._analyse(session, text)
+
+        if action == "move_location":
+            destination = self.world.resolve_location(text)
+            place = self.world.location(destination) if destination else None
+            who = place.in_prose if place else "somewhere else"
+        elif target:
+            who = self.world.character(target).name.split()[0]
+        else:
+            who = "everyone"
+
+        template = _ACTION_PHRASE.get(action, action.replace("_", " ") + " {who}")
+        summary = f"{{player}} tries to {template.format(who=who)}".strip()
+
+        intent = PlayerIntent(
+            action=action,
+            target=target,
+            emotion=emotion,
+            risk=risk,
+            summary=summary,
+            meaningful=True,
+            raw=text,
+            confidence=0.55,
+        )
+        intent.components = self._components(session, text, primary=(action, target, emotion, risk))
+        intent.overall_emotion = emotion
+        return intent
+
+    def _analyse(
+        self, session: GameSession, text: str
+    ) -> tuple[str, str | None, str | None, Risk]:
+        """``(action, target, emotion, risk)`` for one clause of player input."""
+        lowered = text.lower()
         target = self._find_target(lowered, session)
 
         destination = self.world.resolve_location(lowered)
@@ -250,35 +346,56 @@ class DirectorAgent:
             None,
         )
 
-        if action in _HIGH_RISK:
+        if action in _HIGH_RISK or emotion == "angry":
             risk = Risk.high
         elif action in _MEDIUM_RISK:
             risk = Risk.medium
         else:
             risk = Risk.low
-        if emotion == "angry":
-            risk = Risk.high
+        return action, target, emotion, risk
 
-        if action == "move_location":
-            place = self.world.location(destination) if destination else None
-            who = place.in_prose if place else "somewhere else"
-        elif target:
-            who = self.world.character(target).name.split()[0]
-        else:
-            who = "everyone"
+    def _components(
+        self,
+        session: GameSession,
+        text: str,
+        *,
+        primary: tuple[str, str | None, str | None, Risk],
+    ) -> list[IntentComponent]:
+        """Read every distinct attempt from the input, primary first."""
+        action, target, emotion, _risk = primary
+        components = [
+            IntentComponent(
+                action=action, target=target, emotion=emotion,
+                priority=1, confidence=0.55, quote=text.strip(),
+            )
+        ]
+        clauses = [clause.strip() for clause in _CLAUSE_SPLIT.split(text) if clause.strip()]
+        if len(clauses) <= 1:
+            return components
 
-        template = _ACTION_PHRASE.get(action, action.replace("_", " ") + " {who}")
-        summary = f"{{player}} tries to {template.format(who=who)}".strip()
-
-        return PlayerIntent(
-            action=action,
-            target=target,
-            emotion=emotion,
-            risk=risk,
-            summary=summary,
-            meaningful=True,
-            raw=text,
-        )
+        seen = {(action, target)}
+        for clause in clauses:
+            clause_action, clause_target, clause_emotion, _ = self._analyse(session, clause)
+            # The fallback target is whatever conversation is in front of them, which is
+            # usually right -- but it must not turn "I also want to defend Navia" into a
+            # second attempt at the same person.
+            if clause_action == "observe" and not clause_target:
+                continue
+            key = (clause_action, clause_target)
+            if key in seen:
+                continue
+            seen.add(key)
+            components.append(
+                IntentComponent(
+                    action=clause_action,
+                    target=clause_target,
+                    emotion=clause_emotion,
+                    priority=len(components) + 1,
+                    confidence=0.5,
+                    quote=clause,
+                )
+            )
+        return components
 
     # -- planning ------------------------------------------------------------------------
 
@@ -373,10 +490,17 @@ class DirectorAgent:
         return (session.cursor + 1) > self.ending_min_steps
 
     def _focus(self, session: GameSession, intent: PlayerIntent) -> list[str]:
-        """Who should carry this run: the target first, then whoever is standing there."""
+        """Who should carry this run: every named target first, then whoever is there.
+
+        A compound attempt names more than one person, and both of them have to be in
+        the scene for the writer to answer them.
+        """
         ordered: list[str] = []
         if intent.target:
             ordered.append(intent.target)
+        for component in intent.components:
+            if component.target:
+                ordered.append(component.target)
         ordered.extend(c for c in session.world.present_characters if c in session.characters)
         if not ordered:
             # Nobody present: fall back to whoever the player knows best, so a dry scene

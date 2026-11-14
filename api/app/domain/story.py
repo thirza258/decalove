@@ -90,7 +90,12 @@ class RelationshipDelta(BaseModel):
 
 
 class MemoryProposal(BaseModel):
-    """A durable memory the narrative agent thinks a character should keep — PRD §17."""
+    """A durable memory the narrative agent thinks a character should keep — PRD §17.
+
+    The structured fields are proposals too. The engine validates them (category and
+    visibility are closed sets; the character must exist; an unresolved promise only
+    becomes so when the step is delivered) but the model is what notices the event.
+    """
 
     model_config = ConfigDict(extra="ignore")
 
@@ -98,6 +103,11 @@ class MemoryProposal(BaseModel):
     text: str
     importance: float = 0.5
     emotion: str | None = None
+    category: str = "episodic"
+    event_type: str = ""
+    subject: str = ""
+    visibility: str = "private"
+    status: str = "active"
 
     @field_validator("importance")
     @classmethod

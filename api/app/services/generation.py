@@ -20,12 +20,15 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
 import uuid
 from datetime import datetime, timezone
 
+from app.agents.context import ContextAssembler, NarrativeContext
 from app.agents.director import DirectorAgent
 from app.agents.memory_agent import MemoryAgent
 from app.agents.narrative import NarrativeAgent, RunResult
+from app.agents.planner import NarrativePlanner
 from app.agents.visual import AssetSpec, VisualAgent
 from app.domain.direction import DecisionContext, DecisionKind, Directive
 from app.domain.enums import AssetStatus, BatchStatus, StepType
@@ -34,6 +37,7 @@ from app.domain.state import BatchState, GameSession
 from app.domain.story import AssetRef, StoryStep
 from app.repositories.base import ChronicleRepository, GameRepository, StaleSessionError
 from app.services.asset_service import AssetService
+from app.services.tracing import TraceRecorder
 
 log = logging.getLogger(__name__)
 
@@ -43,9 +47,10 @@ log = logging.getLogger(__name__)
 ASSET_PATCH_ATTEMPTS = 3
 
 #: Ceiling on the worker-side intent refinement. The chat client's own timeout is the full
-#: generation budget, which is far too long to spend on a 400-token parse -- if the model
-#: is that slow, the keyword intent the handler already produced is the better answer.
-INTENT_REFINE_TIMEOUT_S = 20.0
+#: generation budget, which is far too long to spend on a small parse -- if the model is
+#: that slow, the keyword intent the handler already produced is the better answer. Free
+#: reasoning models can burn a minute on the schema, hence the generous ceiling.
+INTENT_REFINE_TIMEOUT_S = 60.0
 
 #: How many delivered scenes are read back as long-range context, and how long that
 #: read may take. The ledger is context, not correctness: a slow one is skipped.
@@ -67,6 +72,9 @@ class GenerationService:
         timeout_s: float = 120.0,
         speculative_branches: int = 0,
         task_backend: str = "asyncio",
+        context: ContextAssembler | None = None,
+        planner: NarrativePlanner | None = None,
+        tracer: TraceRecorder | None = None,
     ) -> None:
         self.games = games
         self.narrative = narrative
@@ -78,6 +86,9 @@ class GenerationService:
         self.timeout_s = timeout_s
         self.speculative_branches = speculative_branches
         self.task_backend = task_backend
+        self.context = context
+        self.planner = planner
+        self.tracer = tracer
 
         self._locks: dict[str, asyncio.Lock] = {}
         self._tasks: set[asyncio.Task[None]] = set()
@@ -268,6 +279,9 @@ class GenerationService:
                 break
         record_style: DecisionKind | None = None
         directive = None
+        context: NarrativeContext | None = None
+        started = time.monotonic()
+        trace = None
         try:
             if refine_input:
                 intent = await self._refine_intent(snapshot, intent, refine_input)
@@ -281,11 +295,23 @@ class GenerationService:
             if prepared is not None:
                 result, directive = prepared
             else:
+                context = await self._assemble_context(snapshot, intent, decision, directive)
+                if self.planner is not None and context.threads:
+                    directive.thread_note = self.planner.suggestions(context.threads, snapshot)
                 result = await asyncio.wait_for(
-                    self._generate(snapshot, intent, decision, directive), timeout=self.timeout_s
+                    self._generate(snapshot, intent, decision, directive, context),
+                    timeout=self.timeout_s,
                 )
+            latency_ms = (time.monotonic() - started) * 1000
+            trace = await self._record_trace(
+                snapshot, batch, intent, directive, result, context, latency_ms
+            )
         except asyncio.TimeoutError:
             log.warning("generation for %s timed out after %.0fs", game_id, self.timeout_s)
+            await self._record_failure_trace(
+                snapshot, batch, intent, directive, context, started,
+                "Story generation timed out.",
+            )
             if self.narrative.web_mode:
                 await self._mark_failed(game_id, batch, "Story generation timed out. Please try again.")
                 return
@@ -294,11 +320,17 @@ class GenerationService:
             raise
         except Exception:  # noqa: BLE001 - the game must survive any generator failure
             log.exception("generation for %s failed unexpectedly", game_id)
+            await self._record_failure_trace(
+                snapshot, batch, intent, directive, context, started,
+                "Story generation failed unexpectedly.",
+            )
             if self.narrative.web_mode:
                 await self._mark_failed(game_id, batch, "All story AI attempts failed. Please try again.")
                 return
             result = self._scripted(snapshot, intent, directive)
 
+        if trace is not None:
+            batch.trace_id = trace.id
         try:
             await self.commit_run(game_id, batch, result, intent, directive, record_style=record_style)
         except Exception as exc:
@@ -308,6 +340,8 @@ class GenerationService:
                 "The story could not be saved. Please try again." if self.narrative.web_mode else str(exc),
             )
             return
+        if self.tracer is not None:
+            await self.tracer.mark_committed(trace)
 
         if self.speculative_branches > 0:
             self._spawn(self._speculate(game_id))
@@ -335,15 +369,22 @@ class GenerationService:
             )
             return intent
 
-    async def _generate(
+    async def _assemble_context(
         self,
         snapshot: GameSession,
         intent: PlayerIntent,
         decision: DecisionContext,
         directive: Directive,
-    ) -> RunResult:
-        # Retrieval follows the Director's focus rather than the raw intent: the run is
-        # about whoever is carrying it, which is not always who was addressed.
+        *,
+        mark_referenced: bool = True,
+    ) -> NarrativeContext:
+        if self.context is not None:
+            return await self.context.assemble(
+                snapshot, intent, decision, directive, mark_referenced=mark_referenced
+            )
+
+        # No assembler wired (integration tests and embeddings of the engine): build the
+        # same two sources the engine has always used, with the same bounded waits.
         focus = directive.focus or list(snapshot.world.present_characters)
         query = (
             " ".join(
@@ -351,24 +392,85 @@ class GenerationService:
             )
             or intent.action
         )
+        context = NarrativeContext()
         try:
             recall = self.memory.recall(snapshot.id, query, characters=focus)
-            memories = await asyncio.wait_for(recall, timeout=5)
+            context.memories = await asyncio.wait_for(recall, timeout=5)
+            context.included.append("memories")
         except Exception:
             # Recent dialogue and state remain in the prompt even if retrieval is down.
             log.warning("memory recall unavailable for %s", snapshot.id, exc_info=True)
-            memories = []
+            context.dropped.append("memories")
         try:
             read = self.chronicle.for_game(snapshot.id, limit=CHRONICLE_LIMIT)
-            chronicle = await asyncio.wait_for(read, timeout=CHRONICLE_TIMEOUT_S)
+            context.chronicle = await asyncio.wait_for(read, timeout=CHRONICLE_TIMEOUT_S)
+            context.included.append("chronicle")
         except Exception:
             # The session still carries its recent run summaries; the prompt falls back
             # to those rather than losing the turn over a slow secondary read.
             log.warning("story chronicle unavailable for %s", snapshot.id, exc_info=True)
-            chronicle = []
+            context.dropped.append("chronicle")
+        return context
+
+    async def _generate(
+        self,
+        snapshot: GameSession,
+        intent: PlayerIntent,
+        decision: DecisionContext,
+        directive: Directive,
+        context: NarrativeContext | None = None,
+    ) -> RunResult:
+        context = context or NarrativeContext()
         return await self.narrative.generate(
-            snapshot, intent, memories, decision=decision, directive=directive, chronicle=chronicle,
+            snapshot, intent, context.memories, decision=decision, directive=directive,
+            chronicle=context.chronicle, context=context,
         )
+
+    async def _record_trace(
+        self,
+        snapshot: GameSession,
+        batch: BatchState,
+        intent: PlayerIntent,
+        directive: Directive | None,
+        result: RunResult | None,
+        context: NarrativeContext | None,
+        latency_ms: float,
+    ):
+        if self.tracer is None:
+            return None
+        try:
+            return await self.tracer.record(
+                session=snapshot, batch=batch, intent=intent, directive=directive,
+                result=result, context=context, latency_ms=latency_ms,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.warning("trace recording failed for %s", snapshot.id, exc_info=True)
+            return None
+
+    async def _record_failure_trace(
+        self,
+        snapshot: GameSession,
+        batch: BatchState,
+        intent: PlayerIntent,
+        directive: Directive | None,
+        context: NarrativeContext | None,
+        started: float,
+        error: str,
+    ) -> None:
+        if self.tracer is None:
+            return
+        try:
+            await self.tracer.record(
+                session=snapshot, batch=batch, intent=intent, directive=directive,
+                result=None, context=context,
+                latency_ms=(time.monotonic() - started) * 1000, error=error,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.warning("failure trace recording failed for %s", snapshot.id, exc_info=True)
 
     def _scripted(
         self, snapshot: GameSession, intent: PlayerIntent, directive: Directive | None = None
@@ -518,6 +620,8 @@ class GenerationService:
                 "step_count": len(result.steps),
                 "used_fallback": result.used_fallback,
                 "finished_at": datetime.now(timezone.utc),
+                "quality": result.quality,
+                "trace_id": batch.trace_id,
             })
             await self.games.save(session)
 
@@ -658,8 +762,13 @@ class GenerationService:
                 session, intent, decision, max_steps=self.narrative.max_steps
             )
             try:
+                context = await self._assemble_context(
+                    session, intent, decision, directive, mark_referenced=False,
+                )
+                if self.planner is not None and context.threads:
+                    directive.thread_note = self.planner.suggestions(context.threads, session)
                 self._speculative[key] = (
-                    await self._generate(session, intent, decision, directive),
+                    await self._generate(session, intent, decision, directive, context),
                     directive,
                 )
             except Exception:  # noqa: BLE001 - speculation is best-effort by definition

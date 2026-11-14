@@ -18,6 +18,7 @@ from app.models.game import (
     CharacterOut,
     ChoiceRequest,
     GameStateOut,
+    IntentComponentOut,
     IntentOut,
     LocationOut,
     NewGameRequest,
@@ -27,6 +28,7 @@ from app.models.game import (
     WorldOut,
 )
 from app.runtime import Runtime
+from app.services.evaluation import NarrativeMetrics, summarize
 from app.services.game_service import GameNotFound, InvalidAction
 
 router = APIRouter(tags=["games"])
@@ -101,6 +103,25 @@ async def get_game(game_id: str, runtime: Runtime = RuntimeDep) -> GameStateOut:
     except GameNotFound as exc:
         raise _not_found(game_id) from exc
     return runtime.game_service.to_state(session)
+
+
+@router.get("/games/{game_id}/evaluation", response_model=NarrativeMetrics)
+async def game_evaluation(
+    game_id: str,
+    limit: int = Query(default=200, ge=1, le=1000),
+    runtime: Runtime = RuntimeDep,
+) -> NarrativeMetrics:
+    """Metrics for this playthrough's generation traces (FR-08 §5.38).
+
+    A projection of persisted traces: quality means, violation counts, fallback and
+    repair rates, latency and tokens. Diagnostic only -- reading it cannot change a save.
+    """
+    try:
+        await runtime.game_service.get(game_id)
+    except GameNotFound as exc:
+        raise _not_found(game_id) from exc
+    traces = await runtime.traces.for_game(game_id, limit=limit)
+    return summarize(traces)
 
 
 @router.get("/games/{game_id}/save", response_model=SaveGame)
@@ -190,6 +211,19 @@ async def submit_action(
             emotion=intent.emotion,
             risk=intent.risk.value,
             meaningful=intent.meaningful,
+            components=[
+                IntentComponentOut(
+                    action=component.action,
+                    target=component.target,
+                    emotion=component.emotion,
+                    intensity=component.intensity,
+                    priority=component.priority,
+                    confidence=component.confidence,
+                )
+                for component in intent.components
+            ],
+            ambiguity=intent.ambiguity,
+            confidence=intent.confidence,
         ),
     )
 
@@ -217,6 +251,19 @@ async def submit_choice(
             emotion=intent.emotion,
             risk=intent.risk.value,
             meaningful=intent.meaningful,
+            components=[
+                IntentComponentOut(
+                    action=component.action,
+                    target=component.target,
+                    emotion=component.emotion,
+                    intensity=component.intensity,
+                    priority=component.priority,
+                    confidence=component.confidence,
+                )
+                for component in intent.components
+            ],
+            ambiguity=intent.ambiguity,
+            confidence=intent.confidence,
         ),
     )
 

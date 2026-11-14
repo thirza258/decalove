@@ -257,6 +257,17 @@ class Validator:
                 if target is None:
                     flag("state_consistency", "memory for unknown character", "dropped", index)
                     step.memory = None
+                elif step.characters and target not in step.characters:
+                    # A character cannot form a memory of a scene they were not in. This
+                    # is the deterministic end of the knowledge boundary; the context
+                    # builder handles the other end by never showing them the fact.
+                    flag(
+                        "knowledge_consistency",
+                        f"memory proposed for {target}, who was not in the scene",
+                        "dropped",
+                        index,
+                    )
+                    step.memory = None
                 else:
                     step.memory.character = target
 
@@ -417,22 +428,26 @@ class Validator:
             out.append(Choice(id="pending", text=text))
         return out
 
+    def choice_bank(self, step: GeneratedStep) -> tuple[str, ...]:
+        """The scene-neutral fillers this step may be topped up from."""
+        speaker = step.dialogue.speaker if step.dialogue else None
+        target_id = self.world.resolve_character(speaker) or next(
+            (c for c in step.characters if self.world.character(c)), None
+        )
+        character = self.world.character(target_id) if target_id else None
+        if character:
+            return tuple(
+                line.format(target=character.name.split()[0]) for line in _TOP_UPS_WITH_TARGET
+            )
+        return _TOP_UPS_ALONE
+
     def _top_up(self, step: GeneratedStep, offered: list[Choice]) -> list[Choice]:
         """Bring a short list up to ``min_choices`` from an authored, scene-neutral bank.
 
         Deterministic: the same step always tops up the same way, which matters because
         speculative prefetch keys branches by choice id.
         """
-        speaker = step.dialogue.speaker if step.dialogue else None
-        target_id = self.world.resolve_character(speaker) or next(
-            (c for c in step.characters if self.world.character(c)), None
-        )
-        character = self.world.character(target_id) if target_id else None
-
-        if character:
-            bank = tuple(line.format(target=character.name.split()[0]) for line in _TOP_UPS_WITH_TARGET)
-        else:
-            bank = _TOP_UPS_ALONE
+        bank = self.choice_bank(step)
 
         taken = {self._dedupe_key(choice.text) for choice in offered}
         out = list(offered)
@@ -444,6 +459,9 @@ class Validator:
             taken.add(self._dedupe_key(line))
             out.append(Choice(id="pending", text=line))
         return out
+
+    def renumber_choices(self, choices: list[Choice]) -> list[Choice]:
+        return self._renumber(choices)
 
     @staticmethod
     def _renumber(choices: list[Choice]) -> list[Choice]:

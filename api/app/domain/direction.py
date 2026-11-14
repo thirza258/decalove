@@ -192,6 +192,9 @@ class Directive(BaseModel):
     ending_partners: list[str] = Field(default_factory=list)
     #: Who this story can be about, written by ``agents.routes``. Names only.
     route_note: str = ""
+    #: The most relevant unresolved thread, if one is open. A suggestion, never an
+    #: instruction: the planner cannot force a resolution.
+    thread_note: str = ""
 
     def stance_for(self, character: str) -> Stance | None:
         return next((s for s in self.stances if s.character == character), None)
@@ -233,6 +236,8 @@ class Directive(BaseModel):
             ])
         if self.route_note:
             lines.append(self.route_note)
+        if self.thread_note:
+            lines.append(f"Open thread: {self.thread_note}")
         if self.style_note:
             lines.append(f"Player: {self.style_note}")
         return "\n    ".join(lines)

@@ -106,6 +106,14 @@ a callback in the summer arc can still reach the library in the prologue. Ground
 callback in that record, in delivered dialogue, or in a memory — never in an invented
 past encounter.
 
+What a character may reference is narrower than what happened. Knowledge is derived from
+delivered scenes: a character who was not there, was not told and did not overhear does
+not know. The prompt lists each person's established knowledge and says so when a
+character has none; the writer must not give them another character's secret or an event
+they never witnessed. Unresolved promises and conflicts are tracked as threads and stay
+available to the scene until the delivered story settles them — they are never resolved
+offscreen or forced into a reconciliation the player did not ask for.
+
 The player can see where they stand: the web client shows each character's affection
 and flashes what a beat changed. So a beat that moves somebody should carry a small
 relationship change, and a beat that does not should carry none. An unearned +1 reads

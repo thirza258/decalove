@@ -11,8 +11,11 @@ from typing import Protocol, runtime_checkable
 
 from app.domain.asset import AssetRecord
 from app.domain.chronicle import ChronicleEntry
+from app.domain.knowledge import CharacterKnowledge
 from app.domain.memory import MemoryRecord
 from app.domain.state import GameSession
+from app.domain.threads import NarrativeThread
+from app.domain.trace import NarrativeTrace
 
 
 class StaleSessionError(RuntimeError):
@@ -65,11 +68,70 @@ class MemoryRepository(Protocol):
         """Insert once by id; replaying a delivered step must not duplicate its memory."""
         ...
 
+    async def replace(self, record: MemoryRecord) -> None:
+        """Overwrite a record by id.
+
+        Used by consolidation, which merges duplicates into a surviving record and marks
+        the others ``superseded``. Never used by delivery, which only ever inserts.
+        """
+        ...
+
     async def for_game(self, game_id: str, character: str | None = None) -> list[MemoryRecord]: ...
 
     async def purge_game(self, game_id: str) -> int:
         """Delete every memory belonging to a game. Returns how many went."""
         ...
+
+
+@runtime_checkable
+class KnowledgeRepository(Protocol):
+    """What each character has learned, and how. Scoped to one game.
+
+    Acquisition is derived from the delivered ledger, so the repository is a read model
+    the engine can rebuild; a write failure costs knowledge context and never a beat.
+    """
+
+    name: str
+
+    async def upsert(self, record: CharacterKnowledge) -> None:
+        """Insert or update by id; re-delivery must not duplicate a fact."""
+        ...
+
+    async def for_game(
+        self, game_id: str, character_id: str | None = None
+    ) -> list[CharacterKnowledge]: ...
+
+    async def purge_game(self, game_id: str) -> int: ...
+
+
+@runtime_checkable
+class ThreadRepository(Protocol):
+    """Persistent narrative threads, derived from delivered events."""
+
+    name: str
+
+    async def upsert(self, record: NarrativeThread) -> None: ...
+
+    async def for_game(self, game_id: str) -> list[NarrativeThread]: ...
+
+    async def purge_game(self, game_id: str) -> int: ...
+
+
+@runtime_checkable
+class TraceRepository(Protocol):
+    """Generation traces for regression analysis; diagnostic, never load-bearing."""
+
+    name: str
+
+    async def upsert(self, record: NarrativeTrace) -> None: ...
+
+    async def for_game(self, game_id: str, limit: int = 200) -> list[NarrativeTrace]: ...
+
+    async def mark_delivered(self, game_id: str, batch_id: str, step_index: int) -> int:
+        """Flag every trace written for a batch as read by the player."""
+        ...
+
+    async def purge_game(self, game_id: str) -> int: ...
 
 
 @runtime_checkable

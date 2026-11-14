@@ -11,9 +11,11 @@ from typing import Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.domain.behavior import PlayerBehaviorProfile
 from app.domain.direction import DecisionContext, Directive, PlayerStyle
 from app.domain.enums import RELATIONSHIP_AXES, BatchStatus, Route
 from app.domain.intent import PlayerIntent
+from app.domain.quality import NarrativeQualityReport
 from app.domain.story import RelationshipDelta, StoryStep
 
 FlagValue = Union[str, int, bool]
@@ -120,6 +122,10 @@ class BatchState(BaseModel):
     decision: DecisionContext | None = None
     refine_input: str | None = None
     request_id: str | None = None
+    #: Quality of the run this batch produced, when evaluation was enabled. Persisted
+    #: with the save so a regression report can be built without replaying the model.
+    quality: NarrativeQualityReport | None = None
+    trace_id: str | None = None
 
 
 class GameSession(BaseModel):
@@ -143,6 +149,10 @@ class GameSession(BaseModel):
     last_intent: PlayerIntent | None = None
     #: How this player plays, accumulated across the save (PRD §9.1 pacing).
     style: PlayerStyle = Field(default_factory=PlayerStyle)
+    #: Evidence-based behavioural profile (intelligence PRD FR-07). Updated on delivery,
+    #: never on generation, so an undelivered run cannot change how characters read the
+    #: player.
+    behavior: PlayerBehaviorProfile = Field(default_factory=PlayerBehaviorProfile)
     #: The previous run's brief. Read back when planning the next one, so pacing has
     #: memory -- two charged runs never land back to back.
     last_directive: Directive | None = None

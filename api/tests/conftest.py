@@ -15,11 +15,16 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-os.environ.setdefault("STORAGE_BACKEND", "memory")
-os.environ.setdefault("ASSET_BACKEND", "local")
-os.environ.setdefault("OPENROUTER_API_KEY", "")
-os.environ.setdefault("IMAGE_GENERATION_ENABLED", "False")
-os.environ.setdefault("IMAGE_BACKEND", "openrouter")
+# Direct assignment, not setdefault: pydantic-settings ranks real environment variables
+# above the ``.env`` file, and a developer's working copy commonly has WEB_MODE=True and
+# a key in it. Inheritance made the suite fail for reasons the code under test had
+# nothing to do with. Tests that need web mode pass it explicitly to ``Settings``.
+os.environ["STORAGE_BACKEND"] = "memory"
+os.environ["ASSET_BACKEND"] = "local"
+os.environ["OPENROUTER_API_KEY"] = ""
+os.environ["WEB_MODE"] = "False"
+os.environ["IMAGE_GENERATION_ENABLED"] = "False"
+os.environ["IMAGE_BACKEND"] = "openrouter"
 
 from app.agents.director import DirectorAgent  # noqa: E402
 from app.agents.safety import SafetyFilter  # noqa: E402
@@ -39,8 +44,35 @@ def _reachable(host: str, port: int, timeout: float = 0.75) -> bool:
         return False
 
 
-MONGO_UP = _reachable("127.0.0.1", 27017)
-MINIO_UP = _reachable("127.0.0.1", 9000)
+def _endpoint(url: str, default_host: str, default_port: int) -> tuple[str, int]:
+    """``(host, port)`` from a connection URL or a bare ``host:port`` string."""
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url if "://" in url else f"//{url}")
+    return parsed.hostname or default_host, parsed.port or default_port
+
+
+def _configured_endpoints() -> tuple[str, str]:
+    """Read the deployment's own Mongo/MinIO settings, so a non-default port works.
+
+    The stack in ``docker-compose.yml`` publishes Mongo on ``MONGODB_PORT``, which a
+    local ``.env`` may move (this repo runs it on 4533). Probing the hardcoded default
+    skipped every integration test while a healthy MongoDB was running.
+    """
+    try:
+        from app.config import Settings
+
+        configured = Settings()
+        return configured.MONGODB_URL, configured.MINIO_ENDPOINT
+    except Exception:  # noqa: BLE001 - a broken config should still let offline tests run
+        return "mongodb://localhost:27017", "localhost:9000"
+
+
+MONGO_URL, _MINIO_ENDPOINT = _configured_endpoints()
+MONGO_HOST, MONGO_PORT = _endpoint(MONGO_URL, "127.0.0.1", 27017)
+MINIO_HOST, MINIO_PORT = _endpoint(_MINIO_ENDPOINT, "127.0.0.1", 9000)
+MONGO_UP = _reachable(MONGO_HOST, MONGO_PORT)
+MINIO_UP = _reachable(MINIO_HOST, MINIO_PORT)
 
 #: Integration suites skip themselves rather than fail when the stack is down, so the
 #: whole suite still runs on a machine with no Docker.

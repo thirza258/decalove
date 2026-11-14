@@ -436,6 +436,14 @@ class TestOperational:
     def test_unknown_game_is_a_404(self, client):
         assert client.get("/api/v1/games/nope").status_code == 404
         assert client.get("/api/v1/games/nope/steps/next").status_code == 404
+        assert client.get("/api/v1/games/nope/evaluation").status_code == 404
+
+    def test_evaluation_reports_nothing_before_anything_was_generated(self, client):
+        game = client.post("/api/v1/games", json={"player_name": "Kai"}).json()
+        body = client.get(f"/api/v1/games/{game['game_id']}/evaluation").json()
+        # The authored opening is not a model generation, so there is no trace yet.
+        assert body["runs"] == 0
+        assert body["quality_mean"] is None
 
 
 class TestImagePipeline:

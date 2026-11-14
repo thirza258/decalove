@@ -12,9 +12,12 @@ import logging
 import time
 import uuid
 
+from app.agents.behavior import observe_delivery
 from app.agents.director import DirectorAgent
+from app.agents.knowledge import CharacterKnowledgeManager
 from app.agents.memory_agent import MemoryAgent
 from app.agents.narrative import NarrativeAgent
+from app.agents.planner import NarrativePlanner
 from app.agents.routes import ROUTE_FLAG, settling_partner
 from app.agents.visual import VisualAgent
 from app.content.world import World
@@ -64,6 +67,11 @@ class GameService:
         generation: GenerationService,
         max_wait_ms: int = 10000,
         steps_per_arc: int = 40,
+        knowledge: CharacterKnowledgeManager | None = None,
+        planner: NarrativePlanner | None = None,
+        tracer=None,
+        consolidation_enabled: bool = True,
+        behavior_enabled: bool = True,
     ) -> None:
         self.world = world
         self.games = games
@@ -76,6 +84,11 @@ class GameService:
         self.generation = generation
         self.max_wait_ms = max_wait_ms
         self.steps_per_arc = max(1, steps_per_arc)
+        self.knowledge = knowledge
+        self.planner = planner
+        self.tracer = tracer
+        self.consolidation_enabled = consolidation_enabled
+        self.behavior_enabled = behavior_enabled
         #: Games with a self-heal continuation already spawned. Needed because _kick
         #: runs while holding the game lock, so the submit() it spawns cannot claim
         #: `pending` until this call returns -- and the next poll would otherwise see
@@ -108,6 +121,16 @@ class GameService:
             },
         )
         await self.games.create(session)
+
+        if self.knowledge is not None:
+            # Every character starts knowing their own secret. Recorded once, from the
+            # authored world, so no model can hand somebody knowledge they never had.
+            try:
+                await asyncio.wait_for(self.knowledge.seed(session.id, session), timeout=2.0)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.warning("knowledge seeding failed for %s", session.id, exc_info=True)
 
         # The opening is authored, so New Game is instant and every run starts strong.
         result = self.narrative.opening(session)
@@ -167,11 +190,13 @@ class GameService:
                     await self._commit_step(session, step)
                     skipped.append(step)
                 session.cursor = target
+                self._observe_behavior(session, skipped)
                 session.played()
                 await self.games.save(session)
                 for step in skipped:
                     await self._remember_step(session, step)
                 await self._chronicle_scene(session, skipped)
+                await self._absorb_delivery(session, skipped)
             return session
 
     # -- playback ------------------------------------------------------------------------
@@ -262,10 +287,12 @@ class GameService:
             session.cursor += 1
             step = session.steps[session.cursor]
             await self._commit_step(session, step)
+            self._observe_behavior(session, [step])
             session.played()
             await self.games.save(session)
             await self._remember_step(session, step)
             await self._chronicle_scene(session, [step])
+            await self._absorb_delivery(session, [step])
             return NextStepOut(status="ready", step=step, queue_depth=session.queue_depth)
 
     async def next_batch(self, game_id: str, limit: int = 20, wait_ms: int = 0, after_index: int | None = None) -> StepsBatchOut:
@@ -352,11 +379,13 @@ class GameService:
                 if step.is_ending:
                     break
 
+            self._observe_behavior(session, delivered)
             session.played()
             await self.games.save(session)
             for step in delivered:
                 await self._remember_step(session, step)
             await self._chronicle_scene(session, delivered)
+            await self._absorb_delivery(session, delivered)
             return StepsBatchOut(status="ready", steps=delivered, queue_depth=session.queue_depth)
 
     def _decision_step(self, session: GameSession) -> StoryStep | None:
@@ -485,6 +514,108 @@ class GameService:
                 # memory index must not withhold the beat or its relationship changes.
                 log.warning("memory indexing failed for %s at step %s", session.id, step.index,
                             exc_info=True)
+
+    def _observe_behavior(self, session: GameSession, delivered: list[StoryStep]) -> None:
+        """Fold this delivery into the player's profile BEFORE the save.
+
+        The profile lives in the save document, so updating it after ``games.save``
+        would lose the observation until something else wrote the session. One
+        observation per dimension per batch, keyed by batch id, makes a re-delivery a
+        no-op.
+        """
+        if not self.behavior_enabled or not delivered:
+            return
+        batch_id = delivered[0].batch_id
+        if not batch_id or batch_id == "opening":
+            return
+        pending = session.pending
+        if pending is not None and pending.batch_id != batch_id:
+            # The buffered tail of an already-answered run is being delivered while a
+            # newer turn owns ``pending``. That tail belongs to the older intent, so
+            # attributing it to the new one would pollute the profile.
+            return
+        intent = (
+            pending.intent
+            if pending is not None and pending.intent
+            else session.last_intent
+        )
+        observe_delivery(
+            session.behavior,
+            intent,
+            delivered,
+            batch_id=batch_id,
+            step_index=delivered[-1].index,
+        )
+
+    async def _absorb_delivery(self, session: GameSession, delivered: list[StoryStep]) -> None:
+        """Secondary, delivery-scoped learning: knowledge, consolidation, threads, traces.
+
+        Everything here happens *after* the cursor and state are saved, exactly like
+        memory indexing. None of it is load-bearing for the beat the player just read,
+        so each source gets a bounded wait and a logged failure rather than a raised
+        exception.
+        """
+        disclosed = False
+        if self.knowledge is not None:
+            for step in delivered[:40]:
+                try:
+                    learned = await asyncio.wait_for(
+                        self.knowledge.acquire_from_step(session, step), timeout=2.0
+                    )
+                    if any(record.metadata.get("disclosure") for record in learned):
+                        disclosed = True
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    log.warning(
+                        "knowledge acquisition failed for %s at step %s",
+                        session.id, step.index, exc_info=True,
+                    )
+
+        if self.tracer is not None:
+            for batch_id in dict.fromkeys(
+                step.batch_id for step in delivered if step.batch_id
+            ):
+                last = max(step.index for step in delivered if step.batch_id == batch_id)
+                try:
+                    await self.tracer.mark_delivered(session.id, batch_id, last)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    log.warning("trace delivery mark failed for %s", session.id, exc_info=True)
+
+        # Duplicates can only appear when a run proposes a memory, so consolidation is
+        # gated on that rather than run on every buffered beat: it is O(n^2) in the
+        # number of memories, and a 300-step save delivers ~300 small batches.
+        if self.consolidation_enabled and any(step.memory for step in delivered):
+            try:
+                await asyncio.wait_for(self.memory.consolidate(session.id), timeout=2.0)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.warning("memory consolidation failed for %s", session.id, exc_info=True)
+
+        if self.planner is not None and (
+            disclosed
+            or any(step.memory or step.relationship_changes or step.flags_set
+                   for step in delivered)
+        ):
+            try:
+                memories = await asyncio.wait_for(
+                    self.memory.repository.for_game(session.id), timeout=2.0
+                )
+                knowledge = {}
+                if self.knowledge is not None:
+                    knowledge = await asyncio.wait_for(
+                        self.knowledge.for_game(session.id), timeout=2.0
+                    )
+                await asyncio.wait_for(
+                    self.planner.sync(session, memories, knowledge), timeout=2.0
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.warning("narrative planner sync failed for %s", session.id, exc_info=True)
 
     async def _chronicle_scene(self, session: GameSession, delivered: list[StoryStep]) -> None:
         """Save what the player just read to the story ledger.

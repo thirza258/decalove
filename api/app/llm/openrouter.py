@@ -16,34 +16,204 @@ import json
 import logging
 import random
 import re
+import time
 from typing import Any
 
 import httpx
 
-from app.llm.base import ImageError, LLMError
+from app.llm.base import ImageError, LLMError, record_usage, reset_usage
 
 log = logging.getLogger(__name__)
 
 _RETRYABLE_STATUS = {408, 409, 425, 429, 500, 502, 503, 504}
 
+#: Free models verified by hand against the *story run* schema on 2026-11-14 (ultra:
+#: full 20-step run; super-vl: answers the schema, may return a short run the Validator
+#: repairs). The live ``/models`` catalogue changes constantly, so these exist to make
+#: discovery failure and primary selection safe -- not to be the model list.
+VERIFIED_FREE_MODELS: tuple[str, ...] = (
+    "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "nvidia/nemotron-3.5-super-vl:free",
+)
+
+#: Broader static floor, used only when the live catalogue is unreachable and by the
+#: credit-exhaustion loop. Includes models that answer simpler schemas (and may fail the
+#: story schema); they are attempts of last resort, not recommendations.
 FREE_OPENROUTER_MODELS = [
-    "google/gemma-4-26b-a4b-it:free",
+    "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "nvidia/nemotron-3.5-super-vl:free",
     "nvidia/nemotron-3.5-lightning:free",
     "cohere/north-mini-code:free",
     "recursive/flint-v1.0:free",
-    "xingchen-agi/xing4.0-29b-a4b:free",
-    "nvidia/nemotron-3.5-super-vl:free",
     "dots-studio/dots-3-note-preview:free",
-    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
-    "nvidia/nemotron-3-ultra-550b-a55b:free",
-    "google/gemma-4-31b-it:free",
 ]
+
+#: How long a discovered catalogue is trusted. Free model lists change slowly; an hour
+#: avoids hammering ``/models`` on every runtime build while still picking up new ids.
+FREE_MODEL_CACHE_TTL_S = 3600.0
+_FREE_MODEL_CACHE: tuple[float, list[str]] | None = None
+
+
+def reset_free_model_cache() -> None:
+    """Clear the catalogue cache. Used by tests and by a redeploy that needs fresh ids."""
+    global _FREE_MODEL_CACHE
+    _FREE_MODEL_CACHE = None
+
+
+def shuffled_models(models: list[str] | tuple[str, ...], rng: random.Random | None = None) -> list[str]:
+    """A shuffled copy. Deterministic when an ``rng`` is supplied (tests)."""
+    result = list(dict.fromkeys(models))
+    (rng or random).shuffle(result)
+    return result
 
 
 def get_shuffled_free_models() -> list[str]:
-    models = list(FREE_OPENROUTER_MODELS)
-    random.shuffle(models)
-    return models
+    """Static verified ids, shuffled. The live catalogue is preferred by callers."""
+    return shuffled_models(FREE_OPENROUTER_MODELS)
+
+
+def _pricing_is_zero(value: Any) -> bool | None:
+    try:
+        return float(value) == 0.0
+    except (TypeError, ValueError):
+        return None
+
+
+#: Families that are not chat/completion models even when they are free. OpenRouter
+#: occasionally lists audio, music and image previews with zero pricing and no output
+#: modality metadata; a fallback attempt on one is a wasted turn.
+_NON_TEXT_HINTS: tuple[str, ...] = (
+    "lyria", "whisper", "tts", "text-to-speech", "speech", "audio", "musicgen",
+    "embedding", "embed", "image", "video", "flux", "stable-diffusion", "sdxl",
+    "dall-e", "veo", "kling", "runway", "clip-preview",
+)
+
+#: Parameters that mean a model can enforce a JSON schema server-side. Their presence
+#: is not guaranteed (some aggregators omit it), which is why it ranks rather than
+#: filters.
+_STRUCTURED_PARAMS = frozenset({"structured_outputs", "response_format"})
+
+
+def _supports_structured_outputs(model: dict[str, Any]) -> bool:
+    return bool(_STRUCTURED_PARAMS & set(model.get("supported_parameters") or []))
+
+
+def _is_free_text_model(model: dict[str, Any]) -> bool:
+    """Whether a ``/models`` entry is a free text model.
+
+    OpenRouter exposes zero pricing as strings, and marks free variants with a
+    ``:free`` suffix; either signal is accepted, but both prompt and completion must be
+    zero when pricing is present. Image-output models are excluded -- the story engine
+    needs JSON, not pictures.
+    """
+    model_id = str(model.get("id") or "")
+    if not model_id:
+        return False
+    lowered = model_id.lower()
+    if any(hint in lowered for hint in _NON_TEXT_HINTS):
+        return False
+    architecture = model.get("architecture") or {}
+    outputs = architecture.get("output_modalities")
+    if isinstance(outputs, list) and outputs and "text" not in outputs:
+        return False
+    modality = str(architecture.get("modality") or "")
+    if modality and "->text" not in modality:
+        return False
+
+    pricing = model.get("pricing") or {}
+    prompt = _pricing_is_zero(pricing.get("prompt"))
+    completion = _pricing_is_zero(pricing.get("completion"))
+    if prompt is not None and completion is not None:
+        return prompt and completion
+    return model_id.endswith(":free")
+
+
+async def discover_free_models(
+    *,
+    api_key: str = "",
+    base_url: str = "https://openrouter.ai/api/v1",
+    timeout: float = 5.0,
+    ttl: float = FREE_MODEL_CACHE_TTL_S,
+) -> list[str]:
+    """Fetch, filter and shuffle the current free text models from OpenRouter.
+
+    Fail-open: an unreachable or malformed catalogue returns the last good cache, or an
+    empty list so the caller can fall back to ``VERIFIED_FREE_MODELS``. The models
+    endpoint is public, so this works before any generation call and costs no tokens.
+    """
+    global _FREE_MODEL_CACHE
+    now = time.monotonic()
+    if _FREE_MODEL_CACHE and now - _FREE_MODEL_CACHE[0] < ttl:
+        return list(_FREE_MODEL_CACHE[1])
+
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(f"{base_url.rstrip('/')}/models", headers=headers)
+            response.raise_for_status()
+            data = response.json()
+        entries = data.get("data") if isinstance(data, dict) else data
+        if not isinstance(entries, list):
+            raise ValueError("models response had no data list")
+        candidates = [
+            entry for entry in entries
+            if isinstance(entry, dict) and _is_free_text_model(entry)
+        ]
+        if not candidates:
+            raise ValueError("no free text models in the catalogue")
+    except Exception:  # noqa: BLE001 - discovery must never block a runtime build
+        log.warning("OpenRouter free-model discovery failed; using cached or verified ids",
+                    exc_info=True)
+        return list(_FREE_MODEL_CACHE[1]) if _FREE_MODEL_CACHE else []
+
+    # Shuffle within each group, but try models that can enforce the schema server-side
+    # first: they remove a whole class of malformed-output failures. Hand-verified ids
+    # come before other schema-capable models, so a live catalogue full of new names
+    # cannot displace the fallback that is known to answer this game's schema. Within
+    # every group the order is random, drawn from the live list.
+    strict = [str(entry["id"]) for entry in candidates if _supports_structured_outputs(entry)]
+    relaxed = [str(entry["id"]) for entry in candidates if not _supports_structured_outputs(entry)]
+    verified = [model for model in strict if model in VERIFIED_FREE_MODELS]
+    other_strict = [model for model in strict if model not in VERIFIED_FREE_MODELS]
+    ordered = (
+        shuffled_models(verified)
+        + shuffled_models(other_strict)
+        + shuffled_models(relaxed)
+    )
+    _FREE_MODEL_CACHE = (now, ordered)
+    log.info(
+        "discovered %d free OpenRouter text models (%d schema-capable, %d verified)",
+        len(ordered), len(strict), len(verified),
+    )
+    return list(ordered)
+
+
+def pick_primary_model(discovered: list[str]) -> str:
+    """Choose a primary from a shuffled catalogue, preferring a hand-verified id.
+
+    A random id is a bad first impression if it cannot answer the schema; a verified one
+    that exists in the live catalogue is the stable choice. If none is present, take the
+    first shuffled entry.
+    """
+    for model in VERIFIED_FREE_MODELS:
+        if model in discovered:
+            return model
+    return discovered[0] if discovered else VERIFIED_FREE_MODELS[0]
+
+
+def requires_parameter_relaxation(exc: Any) -> bool:
+    """True when no route supports ``response_format`` on this model.
+
+    Free OpenRouter models frequently have no provider endpoint that accepts the
+    structured-output parameter, so the router answers 404 with "No endpoints found that
+    can handle the requested parameters". Retrying without the routing requirement lets
+    the model answer and puts the schema enforcement back where it belongs: local
+    validation plus the one JSON-repair round-trip. Paid models keep the strict route.
+    """
+    text = str(exc).lower()
+    return "no endpoints found" in text and "parameter" in text
 
 
 def is_credit_exhausted_error(exc_or_status: Any, message: str = "") -> bool:
@@ -283,6 +453,11 @@ class OpenRouterChat(_OpenRouterBase):
         self._model = model
         self._require_parameters = require_parameters
 
+    @property
+    def model(self) -> str:
+        """The model id, recorded in traces so a regression can be attributed."""
+        return self._model
+
     async def complete_json(
         self,
         *,
@@ -293,6 +468,7 @@ class OpenRouterChat(_OpenRouterBase):
         max_tokens: int = 12000,
         temperature: float = 0.8,
     ) -> dict[str, Any]:
+        reset_usage()
         messages = [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
@@ -313,9 +489,25 @@ class OpenRouterChat(_OpenRouterBase):
         try:
             raw = await self._complete_text(payload)
         except Exception as exc:
-            if is_credit_exhausted_error(exc):
+            if payload.get("provider") and requires_parameter_relaxation(exc):
+                log.info(
+                    "no strict-schema route for %s; retrying without provider routing "
+                    "and validating locally", self._model,
+                )
+                relaxed = {key: value for key, value in payload.items() if key != "provider"}
+                raw = await self._complete_text(relaxed)
+            elif is_credit_exhausted_error(exc):
                 log.warning("OpenRouter credits exhausted (%s), falling back to shuffled free models", exc)
-                for free_model in get_shuffled_free_models():
+                catalogue = await discover_free_models(
+                    api_key=self._api_key,
+                    base_url=self._base_url,
+                    timeout=min(5.0, self._timeout),
+                )
+                candidates = [
+                    model for model in (catalogue or FREE_OPENROUTER_MODELS)
+                    if model != self._model
+                ]
+                for free_model in shuffled_models(candidates):
                     try:
                         log.info("Retrying complete_json with free fallback model: %s", free_model)
                         fb_payload = dict(payload)
@@ -325,7 +517,9 @@ class OpenRouterChat(_OpenRouterBase):
                     except Exception as fb_exc:
                         log.warning("Free model %s failed: %s", free_model, fb_exc)
                         continue
-            raise
+                raise
+            else:
+                raise
         try:
             return self._parse(raw)
         except LLMError as first_error:
@@ -353,6 +547,7 @@ class OpenRouterChat(_OpenRouterBase):
 
     async def _complete_text(self, payload: dict[str, Any]) -> str:
         data = await self._post("/chat/completions", payload, LLMError)
+        record_usage(data.get("usage") if isinstance(data, dict) else None)
         if data.get("error"):
             raise LLMError(f"OpenRouter error: {data['error']}")
         try:

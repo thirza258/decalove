@@ -783,6 +783,33 @@ uvicorn command, because the player who hits it is the one who needs it.
 
 ---
 
+### The browser HUD
+
+The web client keeps Ren'Py's 1280×720 letterboxed stage, but the information around it
+is no longer just a text box and one affection bar:
+
+* A scene card names the current place (the beat's location wins over the once-per-turn
+  snapshot, because a buffered batch can move), the day/weekday/hour/weather/arc, and
+  the cast actually on screen. It shows an honest "Writing the next scene…" state while
+  the engine is generating, and offers fullscreen for small windows.
+* The people panel shows affection as the headline and trust, romance and anger beneath
+  it, plus the engine's current mood per character. It collapses to names + affection
+  when the art needs the room. Every value is engine-owned; a beat's `emotion` updates
+  the mood immediately, and a sync overwrites the whole block.
+* The choice menu tags each option with a local intent reading (Support, Ask, Challenge,
+  Observe, …), purely for scanning; the engine's option text is never rewritten. Number
+  keys pick an option, `E` focuses the free-text field.
+* The story log (`L` or the Log button) shows only delivered dialogue, narration and the
+  player's own submitted line — never buffered beats. It is the transcript the player
+  actually read, not the engine's future.
+* Space/Enter advance or complete the line, `L` toggles the log, Escape closes it. The
+  handlers yield to inputs, buttons, the decision menu and the log. The dialogue line is
+  announced to screen readers only once the typewriter finishes, and reduced-motion
+  preferences disable dissolves and pulse animations.
+
+The HUD adds no game state: `scene` mirrors `GameStateOut.world`, `history` is built from
+delivered steps, and both are reset on New Game.
+
 ## 15. Testing
 
 **454 tests.** The whole suite runs with **no API key, no GPU, and no Ren'Py SDK**; the
@@ -812,7 +839,10 @@ cd api && .venv/bin/python -m pytest -q
 | `test_ending.py` | ending selection, the 300-step gate, promotion and refusal |
 | `test_maintenance.py` | the play clock, the sweep, the under-lock re-check, the loop |
 | `test_long_playthrough.py` | **a whole 300+ step game to its ending**, over HTTP |
-| `test_integration_*.py` | **real MongoDB and MinIO** — skipped automatically when they are down |
+| `test_memory_knowledge.py`, `test_intent_quality.py`, `test_threads_behavior.py` | Memory 2.0 retrieval/consolidation, knowledge boundaries, compound intent, quality rubric/repairs, threads, behaviour, choices |
+| `test_context_integration.py`, `test_evaluation_metrics.py` | context assembly/budgeting, token/trace plumbing, metric aggregation and regression gates |
+| `test_narrative_benchmark.py` | the twelve §5.37 narrative scenarios, end to end and offline |
+| `test_integration_*.py` | **real MongoDB, MinIO and Redis** — skipped automatically when down. The probe reads `MONGODB_URL` / `MINIO_ENDPOINT` from settings, so a composed stack published on non-default ports is detected instead of silently skipped. |
 
 Three of these deserve calling out.
 
@@ -844,7 +874,7 @@ The test injects a slow narrative agent to make the window real.
 
 | Deferred | Blocked on | Notes |
 |---|---|---|
-| A run against a real LLM | `OPENROUTER_API_KEY` | The path is covered by a stub provider, not by a live call. Model ids in `.env.example` were checked against OpenRouter's live model list. |
+| ~~A run against a real LLM~~ | — | **Exercised.** A free OpenRouter model (`nvidia/nemotron-3-ultra-550b-a55b:free`) parsed a compound intent, wrote a full 20-step run, and played it through the Mongo-backed engine on 2026-11-14. Free model ids are volatile; the relaxed-route retry and local schema validation keep a dead route from failing the turn. |
 | Real cloud image generation | `OPENROUTER_API_KEY` + `IMAGE_GENERATION_ENABLED=true` | The pipeline runs end-to-end offline against the placeholder PNG generator, so caching, storage and delivery are exercised — only the model call is untested. |
 | ~~Local SDXL image generation~~ | — | **Available.** Weights are downloaded under `api/models/sdxl`; generation requires a CUDA GPU (the compose file reserves one via the NVIDIA container toolkit). Not exercised in CI. |
 | ~~Wiring the static opening~~ | — | **Completed.** `60_static_opening.rpy` is wired into `script.rpy` with `/games/{id}/skip` cursor hand-off and background batch generation. |
@@ -887,6 +917,22 @@ cp api/.env.example api/.env
 # IMAGE_GENERATION_ENABLED=True   +  IMAGE_BACKEND=openrouter | sdxl | sdxl,openrouter
 ```
 
+The default primary is a free OpenRouter model, and the alternates are discovered at
+runtime rather than hardcoded. On boot the engine calls OpenRouter's public `/models`
+endpoint, keeps zero-priced text models (filtering out audio/image/music previews), and
+shuffles them into the fallback chain, with schema-capable models ranked ahead of the
+rest and the configured explicit alternates first. The catalogue is cached for an hour;
+an unreachable or malformed catalogue falls back to the hand-verified static ids, so
+startup never depends on OpenRouter being up.
+
+`OPENROUTER_MODEL=auto` picks a verified primary out of the live catalogue, and
+`OPENROUTER_FALLBACK_MODEL_LIMIT` caps how many alternates join one turn (default 3, so
+`GENERATION_TIMEOUT_S=420` still gives each attempt ~100s). Keep
+`OPENROUTER_REQUIRE_PARAMETERS=True`: a route that cannot honour structured output is
+retried without the routing requirement but still validated against the local schema and
+the JSON-repair round-trip. Paid models can be pinned through the same two variables;
+nothing else in the engine cares.
+
 `IMAGE_BACKEND` is an ordered chain: the first backend that returns an image wins, so
 `sdxl,openrouter` renders on the local GPU and falls back to the hosted API when the GPU
 is absent or the pass fails. An unknown name fails the process at boot.
@@ -914,3 +960,99 @@ presigned URLs), and `/api/v1/seed`. They talk to MongoDB directly and are gated
 `require_mongo` — a clear 503 when Mongo is down, never an `AttributeError` from a
 `None` handle. They are not part of the game loop, and the engine's own asset pipeline
 (§12) does not use them.
+
+---
+
+## 19. The character intelligence layer
+
+The engine always owned relationships and delivered state. The intelligence layer adds
+the context that makes a long playthrough feel remembered, without moving any authority
+out of the deterministic engine (`AGENTS.md`'s state invariants still hold).
+
+| Layer | Module | Committed when |
+|---|---|---|
+| Structured memory | `agents/memory_agent.py` | proposal indexed on **delivery** |
+| Character knowledge | `agents/knowledge.py` | derived from a **delivered** step |
+| Narrative threads | `agents/planner.py` | re-derived from memories + live state on delivery |
+| Player behaviour | `domain/behavior.py` | folded into the save before the delivery save |
+| Quality report | `agents/quality.py` | attached to the batch that produced the run |
+| Generation trace | `services/tracing.py` | written per attempt, marked on commit/delivery |
+| Metrics report | `services/evaluation.py` | computed from persisted traces on demand |
+
+Everything except the behaviour profile and the batch quality report is a **derived read
+model** over the delivered ledger. That is a deliberate simplification of the PRD's
+persistence plan: nothing can drift from the story, nothing has to be migrated when the
+ledger already contains the answer, and a failed write costs context rather than a beat.
+The repositories (`character_knowledge`, `narrative_threads`, `narrative_traces`) exist
+so a read model survives a restart; each is purged with its game by `maintenance.py`.
+
+### Memory 2.0
+
+`CharacterMemory` carries category, event type, status, visibility, provenance and a
+step id. Retrieval blends semantic relevance, importance, recency, relationship relevance
+and unresolved priority with configurable weights (`MEMORY_WEIGHT_*`), then applies two
+floors: an unresolved promise or highly important memory is ranked as if it mattered
+now. Without the floors, a 300-step save's betrayal loses to twenty recent lunches.
+Consolidation merges duplicates by event, marks the loser `superseded`, records
+`merged_from`, never merges an unresolved event into a resolved one, and flags factual
+contradictions rather than picking a winner. `last_referenced_step` records that a
+memory actually reached a prompt: the write is best-effort and speculative prefetch
+deliberately skips it, so a pre-generated branch does not count as a read.
+
+### Character knowledge
+
+`CharacterKnowledgeManager` derives acquisition from the delivered step: present
+characters witness it, a single listener is `told_directly`, a crowd `overheard`, a
+world event is `public_information`. A character's own secret is seeded at New Game. A
+secret spoken in delivered dialogue is learned by the scene. Nobody learns anything from
+a scene they were not in. The prompt renders one block per character and says explicitly
+when a character has no established knowledge; a character may not reference a fact
+listed only under someone else's name.
+
+### Narrative threads
+
+Threads are derived, not proposed: an unresolved promise memory, unresolved friction
+(anger/trust), an earned relationship, an undisclosed secret. `sync` upserts stable ids
+and marks previously open threads `resolved` when their condition has gone, so a settled
+conflict stops influencing the prompt. Dormancy is distance from the last progress, not a
+model's opinion. The planner only ever *suggests* a development to the Director.
+
+### Quality and traces
+
+`NarrativeQualityEvaluator` is a deterministic rubric over the PRD's nine dimensions; it
+runs before any repair, and a repaired run is validated again by `Validator` (the only
+authority on what may be committed). The rubric is local and costs milliseconds, so it
+is on by default (`QUALITY_EVALUATION_ENABLED`); the report is persisted with the batch.
+Repairs are capped at one and only cover repetition and samey menus: a duplicate beat is
+dropped deterministically, and a samey menu gets one bounded writer call
+(`QUALITY_CHOICE_REPAIR_ENABLED`) for a replacement set that is then validated exactly
+like the original run. An optional model judge (`QUALITY_JUDGE_ENABLED`, off by default)
+runs on its own `QUALITY_JUDGE_MODEL` -- free by default, separate from the story model
+-- and may refine taste
+dimensions over the rubric; it cannot raise a dimension the rubric found seriously wrong,
+never touches the engine-observed player-agency or knowledge scores, and a slow or broken
+judge leaves the rubric in place.
+
+`NarrativeTrace` records intent, memory ids, knowledge counts and fact ids, thread ids,
+context sections, prompt version, provider/model, validator rules, quality report, repair
+count, prompt/output character counts, provider-reported prompt/completion/total tokens,
+latency, commit and delivery status. It stores clipped prose, not transcripts. Token
+usage is accumulated per call across JSON-repair and free-model retries through a
+`ContextVar`, so concurrent games cannot attribute one player's tokens to another's
+trace; a provider that reports nothing reads as zero.
+
+`services/evaluation.py` projects traces into the PRD's metric set -- violation counts,
+fallback/repair rates, quality dimension means, repetition and choice-diversity scores,
+latency percentiles, tokens -- and can split by prompt version or model. Its
+`regressions()` function is the §13.4 release gate written as comparisons: more knowledge
+or agency leaks, lower quality, more repetition, or a >50% latency increase. Metrics are
+a projection, never a second store. `GET /api/v1/games/{id}/evaluation` serves the same
+projection for a live save; it is read-only and 404s for an unknown game.
+
+### Benchmark
+
+`api/tests/test_narrative_benchmark.py` implements the PRD §5.37 scenarios as offline
+tests: broken promises, old conflicts, secret disclosure, rejection, apology without
+forgiveness, compound intent, absence, contradictory beliefs, repetition, impossible
+actions, resolved threads and character voice. `tests/test_memory_knowledge.py`,
+`test_intent_quality.py` and `test_threads_behavior.py` hold the unit-level guarantees.

@@ -35,6 +35,12 @@ Optional AI:
 cp .env.example .env          # then set OPENROUTER_API_KEY
 ```
 
+The default story and judge models are free OpenRouter models (`:free`). Fallbacks are
+discovered from OpenRouter's live `/models` catalogue and shuffled per boot, so new free
+models are picked up without editing a list; `OPENROUTER_MODEL=auto` does the same for
+the primary. Set `OPENROUTER_FALLBACK_MODELS` to pin explicit alternates ahead of the
+discovered ones.
+
 ## What resolves to what
 
 | Seam | With infrastructure | Without |

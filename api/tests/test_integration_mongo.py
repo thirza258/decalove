@@ -14,7 +14,7 @@ import uuid
 import pytest
 from motor.motor_asyncio import AsyncIOMotorClient
 
-from conftest import needs_mongo
+from conftest import MONGO_URL, needs_mongo
 from app.domain.chronicle import ChronicleEntry
 from app.domain.memory import MemoryRecord
 from app.domain.asset import AssetRecord
@@ -30,7 +30,7 @@ from app.repositories.mongo_repo import (
 
 pytestmark = [needs_mongo, pytest.mark.integration]
 
-URL = "mongodb://root:rootpassword@localhost:27017"
+URL = MONGO_URL
 
 
 @pytest.fixture
@@ -321,11 +321,25 @@ class TestGarbageCollectionQueries:
     async def test_an_end_to_end_sweep_against_mongo(self, games, db, world):
         from datetime import timedelta
 
-        from app.repositories.mongo_repo import MongoMemoryRepository
+        from app.domain.knowledge import CharacterKnowledge
+        from app.domain.threads import NarrativeThread, ThreadType
+        from app.domain.trace import NarrativeTrace
+        from app.repositories.mongo_repo import (
+            MongoChronicleRepository,
+            MongoKnowledgeRepository,
+            MongoMemoryRepository,
+            MongoThreadRepository,
+            MongoTraceRepository,
+        )
         from app.services.maintenance import MaintenanceService
 
         memories = MongoMemoryRepository(db)
-        await memories.ensure_indexes()
+        chronicle = MongoChronicleRepository(db)
+        knowledge = MongoKnowledgeRepository(db)
+        threads = MongoThreadRepository(db)
+        traces = MongoTraceRepository(db)
+        for repository in (memories, chronicle, knowledge, threads, traces):
+            await repository.ensure_indexes()
 
         await games.create(self._aged(world, "abandoned", days=30))
         await games.create(self._aged(world, "finished", days=30, ended=True))
@@ -334,6 +348,16 @@ class TestGarbageCollectionQueries:
             await memories.add(
                 MemoryRecord(id=f"{owner}-m", game_id=owner, character="aiko", text="x")
             )
+            await knowledge.upsert(CharacterKnowledge(
+                id=f"{owner}-k", game_id=owner, character_id="aiko",
+                fact_id="f1", proposition="x",
+            ))
+            await threads.upsert(NarrativeThread(
+                id=f"{owner}-t", game_id=owner, title="x", thread_type=ThreadType.promise,
+            ))
+            await traces.upsert(NarrativeTrace(
+                id=f"{owner}-r", game_id=owner, batch_id="b1", prompt_version="v1",
+            ))
 
         import asyncio
 
@@ -349,20 +373,30 @@ class TestGarbageCollectionQueries:
                 pass
 
         service = MaintenanceService(
-            games=games, memories=memories, generation=Locks(), game_service=Noop(), ttl_days=7
+            games=games, memories=memories, chronicle=chronicle,
+            generation=Locks(), game_service=Noop(), ttl_days=7,
+            knowledge=knowledge, threads=threads, traces=traces,
         )
         report = await service.sweep_once()
 
         assert report.deleted == 1
         assert report.game_ids == ["abandoned"]
         assert report.memories_removed == 1
+        assert report.knowledge_removed == 1
+        assert report.threads_removed == 1
+        assert report.traces_removed == 1
 
         assert await games.get("abandoned") is None
         assert await games.get("finished") is not None
         assert await games.get("live") is not None
         assert await memories.for_game("abandoned") == []
-        assert len(await memories.for_game("finished")) == 1
+        assert await knowledge.for_game("abandoned") == []
+        assert await threads.for_game("abandoned") == []
+        assert await traces.for_game("abandoned") == []
         assert len(await memories.for_game("live")) == 1
+        assert len(await knowledge.for_game("live")) == 1
+        assert len(await threads.for_game("live")) == 1
+        assert len(await traces.for_game("live")) == 1
 
     async def test_the_sweep_index_exists(self, games, db):
         await games.ensure_indexes()
@@ -440,3 +474,168 @@ class TestChronicle:
         assert await chronicle.purge_game(mine) == 1
         assert await chronicle.for_game(mine) == []
         assert len(await chronicle.for_game(theirs)) == 1
+
+
+class TestIntelligenceRepositories:
+    """The three per-game stores behind the intelligence layer.
+
+    They are derived read models, which makes the MongoDB behaviour simple -- but the
+    upsert ids are what make delivery idempotent, and an id that round-trips wrongly
+    would either duplicate knowledge or lose a thread. That is worth a real server.
+    """
+
+    async def test_memory_replacement_preserves_consolidation_provenance(self, db):
+        from app.domain.memory import MemoryStatus
+        from app.repositories.mongo_repo import MongoMemoryRepository
+
+        repository = MongoMemoryRepository(db)
+        await repository.ensure_indexes()
+        record = MemoryRecord(
+            id="m1", game_id="g1", character="aiko", text="Kai helped with the postcard.",
+            importance=0.4, step_index=1,
+        )
+        await repository.add(record)
+
+        record.status = MemoryStatus.superseded
+        record.merged_from = ["m0"]
+        record.metadata = {"superseded_by": "m2"}
+        await repository.replace(record)
+
+        stored = (await repository.for_game("g1"))[0]
+        assert stored.status is MemoryStatus.superseded
+        assert stored.merged_from == ["m0"]
+        assert stored.metadata["superseded_by"] == "m2"
+
+    async def test_knowledge_upserts_by_character_and_fact(self, db):
+        from app.domain.knowledge import CharacterKnowledge, KnowledgeType
+        from app.repositories.mongo_repo import MongoKnowledgeRepository
+
+        repository = MongoKnowledgeRepository(db)
+        await repository.ensure_indexes()
+        base = dict(game_id="g1", fact_id="f1", proposition="Aiko lost the notebook.")
+        await repository.upsert(CharacterKnowledge(
+            id="k1", character_id="aiko", knowledge_type=KnowledgeType.known, **base,
+        ))
+        await repository.upsert(CharacterKnowledge(
+            id="k2", character_id="ren", knowledge_type=KnowledgeType.suspected, **base,
+        ))
+        await repository.upsert(CharacterKnowledge(
+            id="k1", character_id="aiko", knowledge_type=KnowledgeType.believed, **base,
+        ))
+
+        knowledge = await repository.for_game("g1")
+        assert {record.character_id for record in knowledge} == {"aiko", "ren"}
+        aiko = await repository.for_game("g1", "aiko")
+        assert len(aiko) == 1
+        assert aiko[0].knowledge_type is KnowledgeType.believed
+
+    async def test_threads_round_trip_and_are_purged_with_their_game(self, db):
+        from app.domain.threads import NarrativeThread, ThreadStatus, ThreadType
+        from app.repositories.mongo_repo import MongoThreadRepository
+
+        repository = MongoThreadRepository(db)
+        await repository.ensure_indexes()
+        for game_id, status in (("g1", ThreadStatus.active), ("g1", ThreadStatus.resolved),
+                                ("g2", ThreadStatus.active)):
+            await repository.upsert(NarrativeThread(
+                id=f"{game_id}-{status.value}-{uuid.uuid4().hex[:4]}",
+                game_id=game_id, title="A promise", status=status,
+                thread_type=ThreadType.promise, priority=0.8,
+            ))
+
+        assert len(await repository.for_game("g1")) == 2
+        assert await repository.purge_game("g1") == 2
+        assert len(await repository.for_game("g2")) == 1
+
+    async def test_traces_keep_the_newest_rows_and_are_marked_delivered(self, db):
+        from datetime import datetime, timedelta, timezone
+
+        from app.domain.trace import NarrativeTrace
+        from app.repositories.mongo_repo import MongoTraceRepository
+
+        repository = MongoTraceRepository(db)
+        await repository.ensure_indexes()
+        start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        for index in range(4):
+            await repository.upsert(NarrativeTrace(
+                id=f"t{index}", game_id="g1", batch_id="b1" if index < 2 else "b2",
+                prompt_version="v1", latency_ms=index * 100,
+                created_at=start + timedelta(seconds=index),
+            ))
+
+        rows = await repository.for_game("g1", limit=2)
+        assert [row.id for row in rows] == ["t2", "t3"], "the oldest traces must be lost first"
+
+        assert await repository.mark_delivered("g1", "b1", 7) == 2
+        marked = [row for row in await repository.for_game("g1") if row.batch_id == "b1"]
+        assert all(row.delivered and row.step_index == 7 for row in marked)
+
+    async def test_a_session_round_trip_keeps_the_intelligence_fields(self, db, world):
+        from app.domain.intent import IntentComponent, PlayerIntent
+        from app.repositories.mongo_repo import MongoGameRepository
+
+        repository = MongoGameRepository(db)
+        await repository.ensure_indexes()
+        session = make_session(world, game_id=uuid.uuid4().hex)
+        session.behavior.observe("empathy", 1.0, step_id="b1")
+        session.behavior.conflicting_evidence["empathy"] = 1
+        session.last_intent = PlayerIntent(
+            action="apologise", target="aiko",
+            components=[
+                IntentComponent(action="apologise", target="aiko", priority=1),
+                IntentComponent(action="defend", target="ren", priority=2),
+            ],
+            ambiguity=True, confidence=0.4,
+        )
+        await repository.create(session)
+
+        loaded = await repository.get(session.id)
+        assert loaded.behavior.evidence_count["empathy"] == 1
+        assert loaded.behavior.conflicting_evidence["empathy"] == 1
+        assert [component.target for component in loaded.last_intent.components] == ["aiko", "ren"]
+        assert loaded.last_intent.ambiguity is True
+
+
+class TestMigrations:
+    """Documents written before the intelligence layer must still load unchanged."""
+
+    async def test_a_legacy_memory_loads_with_structured_defaults(self, db):
+        from datetime import datetime, timezone
+
+        from app.domain.memory import MemoryCategory, MemoryStatus
+        from app.repositories.mongo_repo import MEMORIES, MongoMemoryRepository
+
+        await db[MEMORIES].insert_one({
+            "_id": "legacy-memory",
+            "game_id": "g1",
+            "character": "aiko",
+            "text": "Kai helped with the postcard.",
+            "importance": 0.7,
+            "emotion": "gratitude",
+            "impact": {"trust": 2},
+            "embedding": [0.1, 0.2],
+            "step_index": 4,
+            "created_at": datetime(2025, 1, 1, tzinfo=timezone.utc),
+        })
+
+        record = (await MongoMemoryRepository(db).for_game("g1"))[0]
+        assert record.text == "Kai helped with the postcard."
+        assert record.category is MemoryCategory.episodic
+        assert record.status is MemoryStatus.active
+        assert record.visibility.value == "private"
+        assert record.created_at_step == 0
+        assert record.merged_from == []
+
+    async def test_a_legacy_session_loads_without_a_behavior_profile(self, db, world):
+        from app.repositories.mongo_repo import GAMES, MongoGameRepository
+
+        document = make_session(world, game_id="legacy-session").model_dump(mode="python")
+        document["_id"] = document.pop("id")
+        document["_version"] = 0
+        document.pop("behavior")
+        await db[GAMES].insert_one(document)
+
+        loaded = await MongoGameRepository(db).get("legacy-session")
+        assert loaded.behavior.evidence_count == {}
+        assert loaded.behavior.note() == ""
+        assert loaded.last_intent is None and loaded.last_directive is None

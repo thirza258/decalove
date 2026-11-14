@@ -44,12 +44,26 @@ class ChoiceRequest(BaseModel):
     choice_id: str
 
 
+class IntentComponentOut(BaseModel):
+    action: str = ""
+    target: str | None = None
+    emotion: str | None = None
+    intensity: float = 0.5
+    priority: int = 1
+    confidence: float = 0.5
+
+
 class IntentOut(BaseModel):
     action: str
     target: str | None = None
     emotion: str | None = None
     risk: str = "medium"
     meaningful: bool = True
+    #: Every distinct attempt read from the input, primary first. Existing clients can
+    #: ignore it; the fields above remain the primary reading.
+    components: list[IntentComponentOut] = Field(default_factory=list)
+    ambiguity: bool = False
+    confidence: float = 0.5
 
 
 class AcceptedOut(BaseModel):

@@ -55,17 +55,27 @@ class Settings(BaseSettings):
     # With no key the engine runs on the scripted narrator (see agents/scripted.py).
     OPENROUTER_API_KEY: str = ""
     OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
-    # Must support structured outputs. Verify at:
+    # Defaults are free OpenRouter models. They change over time -- verify at:
     #   https://openrouter.ai/models?supported_parameters=structured_outputs
-    OPENROUTER_MODEL: str = "google/gemini-3.7-flash"
-    # Ordered alternate story models, used only in WEB_MODE. Each must support JSON schema.
-    OPENROUTER_FALLBACK_MODELS: str = "openai/gpt-4.1-mini"
-    WEB_AI_ATTEMPT_TIMEOUT_S: float = 45.0
+    #: A model id, or ``auto`` to pick a verified model from the live free catalogue.
+    OPENROUTER_MODEL: str = "nvidia/nemotron-3-ultra-550b-a55b:free"
+    #: Explicit alternates, tried before discovered ones. Blank is the normal setting:
+    #: the chain is then freshly shuffled from OpenRouter's live free-model catalogue.
+    OPENROUTER_FALLBACK_MODELS: str = ""
+    #: Discover /models and shuffle free text models into the fallback chain. Fail-open:
+    #: an unreachable catalogue falls back to the hand-verified ids.
+    OPENROUTER_DISCOVER_FREE_MODELS: bool = True
+    OPENROUTER_MODEL_DISCOVERY_TIMEOUT_S: float = 5.0
+    #: Total alternates after the primary (configured ones first, then shuffled live).
+    OPENROUTER_FALLBACK_MODEL_LIMIT: int = 3
+    #: Free models write a 20-step run in roughly a minute, so the per-attempt ceiling
+    #: and the provider HTTP timeout are sized for that rather than for a paid model.
+    WEB_AI_ATTEMPT_TIMEOUT_S: float = 120.0
     # Verify at: https://openrouter.ai/models?output_modalities=image
     OPENROUTER_IMAGE_MODEL: str = "google/gemini-3.1-flash-image"
     # Keeps the request off provider endpoints that would ignore response_format.
     OPENROUTER_REQUIRE_PARAMETERS: bool = True
-    OPENROUTER_TIMEOUT_S: float = 120.0
+    OPENROUTER_TIMEOUT_S: float = 180.0
     OPENROUTER_MAX_RETRIES: int = 2
     OPENROUTER_SITE_URL: str = ""
     OPENROUTER_APP_NAME: str = "Decalove"
@@ -80,7 +90,9 @@ class Settings(BaseSettings):
     MAX_CHOICES: int = 5
     TEMPERATURE: float = 0.85
     MAX_OUTPUT_TOKENS: int = 12000
-    GENERATION_TIMEOUT_S: float = 120.0
+    #: Free models take ~70s for a 20-step run. With three alternates this leaves each
+    #: attempt a real chance rather than timing out all of them.
+    GENERATION_TIMEOUT_S: float = 420.0
     #: PRD §24 Rule 4 — the most any single step may move a relationship axis.
     MAX_RELATIONSHIP_DELTA: int = 5
     #: Upper bound for long-polling GET /steps/next.
@@ -98,6 +110,54 @@ class Settings(BaseSettings):
     #: roughly 60 steps into it.
     ENDING_MIN_STEPS: int = 300
     MEMORY_TOP_K: int = 6
+
+    # -- Character intelligence --------------------------------------------------------
+    #: Hybrid memory retrieval weights (PRD §5.4). Normalised at use; they are settings
+    #: because they are a tuning decision against playtests, not constants.
+    MEMORY_WEIGHT_SEMANTIC: float = 0.35
+    MEMORY_WEIGHT_IMPORTANCE: float = 0.20
+    MEMORY_WEIGHT_RECENCY: float = 0.15
+    MEMORY_WEIGHT_RELATIONSHIP: float = 0.20
+    MEMORY_WEIGHT_UNRESOLVED: float = 0.10
+    #: Token budget for memories in one prompt (a memory is ~len(text)/4 tokens here).
+    MEMORY_CONTEXT_BUDGET: int = 1200
+    #: Merge duplicate memories on delivery. Never deletes; marks the loser superseded.
+    MEMORY_CONSOLIDATION_ENABLED: bool = True
+
+    #: Character knowledge: acquisition is derived from delivered steps. Turning this
+    #: off simply returns the engine to world-truth-only context.
+    KNOWLEDGE_ENABLED: bool = True
+    #: Narrative threads derived from delivered memories and live state.
+    THREAD_TRACKING_ENABLED: bool = True
+    #: Evidence-based player behaviour profile, committed with the save.
+    BEHAVIOR_MODELING_ENABLED: bool = True
+
+    #: Total character budget for the assembled narrative context (output tokens are
+    #: reserved by MAX_OUTPUT_TOKENS separately). Prompt builder falls back to dropping
+    #: optional sections rather than failing when the budget is exceeded.
+    CONTEXT_MAX_CHARS: int = 24000
+
+    #: Quality evaluation is a second opinion, not a gate: the deterministic Validator
+    #: always runs first. The default rubric is local and costs milliseconds; at most
+    #: QUALITY_MAX_REPAIRS deterministic repairs are attempted and each is re-validated.
+    #: The optional model judge is separate and off by default.
+    QUALITY_EVALUATION_ENABLED: bool = True
+    QUALITY_MIN_OVERALL: float = 0.62
+    QUALITY_MAX_REPAIRS: int = 1
+    #: Optional second pass as a writing judge. Runs on QUALITY_JUDGE_MODEL when set,
+    #: otherwise reuses the story model. Only runs when QUALITY_EVALUATION_ENABLED is
+    #: also on, is bounded, and fail-open.
+    QUALITY_JUDGE_ENABLED: bool = False
+    QUALITY_JUDGE_MODEL: str = "nvidia/nemotron-3.5-super-vl:free"
+    QUALITY_JUDGE_TIMEOUT_S: float = 45.0
+    #: One extra writer call to replace a menu whose options are paraphrases. Bounded,
+    #: re-validated, and only used when quality evaluation is on and a model is present.
+    QUALITY_CHOICE_REPAIR_ENABLED: bool = True
+    QUALITY_CHOICE_REPAIR_TIMEOUT_S: float = 45.0
+
+    #: One row per generation attempt: context, validator result, quality, latency, cost
+    #: proxies. Diagnostic only; a trace-store outage never costs a turn.
+    NARRATIVE_TRACE_ENABLED: bool = True
 
     # -- Images ----------------------------------------------------------------------
     #: Off by default: image models cost real money per scene.

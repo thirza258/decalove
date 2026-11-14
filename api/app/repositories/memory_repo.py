@@ -11,8 +11,11 @@ from datetime import datetime, timezone
 
 from app.domain.asset import AssetRecord
 from app.domain.chronicle import ChronicleEntry
+from app.domain.knowledge import CharacterKnowledge
 from app.domain.memory import MemoryRecord
 from app.domain.state import GameSession
+from app.domain.threads import NarrativeThread
+from app.domain.trace import NarrativeTrace
 from app.repositories.base import StaleSessionError
 
 
@@ -55,6 +58,7 @@ class InMemoryGameRepository:
                 "steps": list(session.steps),
                 "history": list(session.history),
                 "style": session.style.model_copy(deep=True),
+                "behavior": session.behavior.model_copy(deep=True),
                 "pending": session.pending.model_copy(deep=True) if session.pending else None,
                 "last_intent": (
                     session.last_intent.model_copy(deep=True) if session.last_intent else None
@@ -113,6 +117,13 @@ class InMemoryMemoryRepository:
             return
         self._records.append(record.model_copy(deep=True))
 
+    async def replace(self, record: MemoryRecord) -> None:
+        for index, existing in enumerate(self._records):
+            if existing.id == record.id:
+                self._records[index] = record.model_copy(deep=True)
+                return
+        self._records.append(record.model_copy(deep=True))
+
     async def for_game(self, game_id: str, character: str | None = None) -> list[MemoryRecord]:
         return [
             record.model_copy(deep=True)
@@ -124,6 +135,92 @@ class InMemoryMemoryRepository:
         before = len(self._records)
         self._records = [record for record in self._records if record.game_id != game_id]
         return before - len(self._records)
+
+
+class InMemoryKnowledgeRepository:
+    name = "memory"
+
+    def __init__(self) -> None:
+        self._records: dict[str, CharacterKnowledge] = {}
+
+    async def upsert(self, record: CharacterKnowledge) -> None:
+        self._records[record.id] = record.model_copy(deep=True)
+
+    async def for_game(
+        self, game_id: str, character_id: str | None = None
+    ) -> list[CharacterKnowledge]:
+        return [
+            record.model_copy(deep=True)
+            for record in self._records.values()
+            if record.game_id == game_id
+            and (character_id is None or record.character_id == character_id)
+        ]
+
+    async def purge_game(self, game_id: str) -> int:
+        gone = [key for key, record in self._records.items() if record.game_id == game_id]
+        for key in gone:
+            del self._records[key]
+        return len(gone)
+
+
+class InMemoryThreadRepository:
+    name = "memory"
+
+    def __init__(self) -> None:
+        self._records: dict[str, NarrativeThread] = {}
+
+    async def upsert(self, record: NarrativeThread) -> None:
+        self._records[record.id] = record.model_copy(deep=True)
+
+    async def for_game(self, game_id: str) -> list[NarrativeThread]:
+        found = [
+            record.model_copy(deep=True)
+            for record in self._records.values()
+            if record.game_id == game_id
+        ]
+        found.sort(key=lambda thread: (thread.status.value, -thread.priority))
+        return found
+
+    async def purge_game(self, game_id: str) -> int:
+        gone = [key for key, record in self._records.items() if record.game_id == game_id]
+        for key in gone:
+            del self._records[key]
+        return len(gone)
+
+
+class InMemoryTraceRepository:
+    name = "memory"
+
+    def __init__(self) -> None:
+        self._records: dict[str, NarrativeTrace] = {}
+
+    async def upsert(self, record: NarrativeTrace) -> None:
+        record.updated_at = datetime.now(timezone.utc)
+        self._records[record.id] = record.model_copy(deep=True)
+
+    async def for_game(self, game_id: str, limit: int = 200) -> list[NarrativeTrace]:
+        found = [
+            record.model_copy(deep=True)
+            for record in self._records.values()
+            if record.game_id == game_id
+        ]
+        found.sort(key=lambda trace: trace.created_at)
+        return found[-limit:]
+
+    async def mark_delivered(self, game_id: str, batch_id: str, step_index: int) -> int:
+        marked = 0
+        for record in self._records.values():
+            if record.game_id == game_id and record.batch_id == batch_id:
+                record.delivered = True
+                record.step_index = max(record.step_index, step_index)
+                marked += 1
+        return marked
+
+    async def purge_game(self, game_id: str) -> int:
+        gone = [key for key, record in self._records.items() if record.game_id == game_id]
+        for key in gone:
+            del self._records[key]
+        return len(gone)
 
 
 class InMemoryChronicleRepository:

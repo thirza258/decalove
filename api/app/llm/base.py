@@ -6,7 +6,45 @@ scripted narrator. That is what makes the game runnable with no API key.
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from typing import Any, Protocol, runtime_checkable
+
+
+#: Token usage for the current ``complete_json`` call. A ContextVar rather than an
+#: attribute on the provider: two games can be generating concurrently in one process,
+#: and a shared field would attribute one player's tokens to the other's trace.
+_CURRENT_USAGE: ContextVar[dict[str, int] | None] = ContextVar(
+    "llm_current_usage", default=None
+)
+_USAGE_KEYS = ("prompt_tokens", "completion_tokens", "total_tokens")
+
+
+def reset_usage() -> None:
+    """Called once at the start of a provider call, before any retries it makes."""
+    _CURRENT_USAGE.set({key: 0 for key in _USAGE_KEYS})
+
+
+def record_usage(usage: dict[str, Any] | None) -> None:
+    """Accumulate one HTTP response's usage into the current call.
+
+    Accumulates because a call may be a repair round-trip or a free-model retry; the
+    trace wants what the turn cost, not what the last attempt cost.
+    """
+    if not usage:
+        return
+    current = dict(_CURRENT_USAGE.get() or {key: 0 for key in _USAGE_KEYS})
+    for key in _USAGE_KEYS:
+        value = usage.get(key)
+        if isinstance(value, (int, float)):
+            current[key] = current.get(key, 0) + int(value)
+    _CURRENT_USAGE.set(current)
+
+
+def take_usage() -> dict[str, int]:
+    """Read and clear the current call's usage. Empty when the provider reports none."""
+    value = _CURRENT_USAGE.get() or {}
+    _CURRENT_USAGE.set(None)
+    return {key: int(value.get(key, 0)) for key in _USAGE_KEYS}
 
 
 class LLMError(RuntimeError):

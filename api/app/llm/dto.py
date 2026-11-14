@@ -81,11 +81,20 @@ class LLMVisual(BaseModel):
 
 
 class LLMMemory(BaseModel):
+    """A proposed memory. The structured fields are optional intent, validated by the
+    engine: the model may say a promise is unresolved, but only the delivered story can
+    make it so."""
+
     model_config = ConfigDict(extra="ignore")
     character: str
     text: str
     importance: float = 0.5
     emotion: str | None = None
+    category: str = "episodic"
+    event_type: str = ""
+    subject: str = ""
+    visibility: str = "private"
+    status: str = "active"
 
 
 class LLMStep(BaseModel):
@@ -134,6 +143,11 @@ class LLMStep(BaseModel):
                     text=self.memory.text,
                     importance=self.memory.importance,
                     emotion=self.memory.emotion,
+                    category=self.memory.category,
+                    event_type=self.memory.event_type,
+                    subject=self.memory.subject,
+                    visibility=self.memory.visibility,
+                    status=self.memory.status,
                 )
                 if self.memory
                 else None
@@ -171,3 +185,35 @@ class LLMRun(BaseModel):
 
     def to_domain(self) -> GeneratedRun:
         return GeneratedRun(summary=self.summary, steps=[s.to_domain() for s in self.steps])
+
+
+class LLMQualityScore(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    dimension: str
+    score: float
+
+
+class LLMQualityIssue(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    dimension: str
+    severity: Literal["low", "medium", "high"] = "medium"
+    description: str = ""
+
+
+class LLMChoiceSet(BaseModel):
+    """A replacement decision menu, used only by the bounded quality repair."""
+
+    model_config = ConfigDict(extra="ignore")
+    choices: list[str] = Field(default_factory=list)
+    rationale: str = ""
+
+
+class LLMQualityReport(BaseModel):
+    """The wire shape for the optional model judge. Lists, not maps: strict JSON
+    schema mode forbids dictionaries with open-ended keys."""
+
+    model_config = ConfigDict(extra="ignore")
+    overall_score: float = 1.0
+    scores: list[LLMQualityScore] = Field(default_factory=list)
+    issues: list[LLMQualityIssue] = Field(default_factory=list)
+    repairable: bool = False

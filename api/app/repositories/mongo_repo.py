@@ -14,14 +14,20 @@ from pymongo.errors import PyMongoError
 
 from app.domain.asset import AssetRecord
 from app.domain.chronicle import ChronicleEntry
+from app.domain.knowledge import CharacterKnowledge
 from app.domain.memory import MemoryRecord
 from app.domain.state import GameSession
+from app.domain.threads import NarrativeThread
+from app.domain.trace import NarrativeTrace
 from app.repositories.base import StaleSessionError
 
 GAMES = "game_sessions"
 MEMORIES = "character_memories"
 ASSETS = "generated_assets"
 CHRONICLE = "story_chronicle"
+KNOWLEDGE = "character_knowledge"
+THREADS = "narrative_threads"
+TRACES = "narrative_traces"
 
 
 def _dump(model: Any) -> dict[str, Any]:
@@ -133,6 +139,11 @@ class MongoMemoryRepository:
         document["_id"] = document.pop("id")
         await self._col.update_one({"_id": document["_id"]}, {"$setOnInsert": document}, upsert=True)
 
+    async def replace(self, record: MemoryRecord) -> None:
+        document = _dump(record)
+        document.pop("id", None)
+        await self._col.update_one({"_id": record.id}, {"$set": document}, upsert=True)
+
     async def purge_game(self, game_id: str) -> int:
         result = await self._col.delete_many({"game_id": game_id})
         return result.deleted_count
@@ -234,3 +245,99 @@ class MongoAssetRepository:
             return None
         document["id"] = document.pop("_id")
         return AssetRecord.model_validate(document)
+
+
+class _MongoScopedRepository:
+    """Shared CRUD for the intelligence layer's per-game records.
+
+    Two of these (knowledge, threads) are derived read models and one (traces) is
+    diagnostic. None of them is load-bearing for delivery, so a Mongo outage here must
+    surface as a logged warning rather than a failed turn -- callers already wrap them
+    with bounded waits.
+    """
+
+    collection_name: str = ""
+    model: type[Any] = object
+    indexes: tuple[tuple[str, int], ...] = (("game_id", ASCENDING),)
+
+    def __init__(self, db: Any) -> None:
+        self._db = db
+
+    @property
+    def _col(self) -> Any:
+        return self._db[self.collection_name]
+
+    async def ensure_indexes(self) -> None:
+        await self._col.create_index(list(self.indexes))
+
+    async def upsert(self, record: Any) -> None:
+        document = _dump(record)
+        document.pop("id", None)
+        await self._col.update_one({"_id": record.id}, {"$set": document}, upsert=True)
+
+    async def purge_game(self, game_id: str) -> int:
+        result = await self._col.delete_many({"game_id": game_id})
+        return result.deleted_count
+
+    async def _read(self, query: dict[str, Any], *, sort: list[tuple[str, int]] | None = None,
+                    limit: int | None = None) -> list[Any]:
+        cursor = self._col.find(query)
+        if sort:
+            cursor = cursor.sort(sort)
+        if limit:
+            cursor = cursor.limit(limit)
+        records = []
+        async for document in cursor:
+            document["id"] = document.pop("_id")
+            records.append(self.model.model_validate(document))
+        return records
+
+
+class MongoKnowledgeRepository(_MongoScopedRepository):
+    name = "mongo"
+    collection_name = KNOWLEDGE
+    model = CharacterKnowledge
+    indexes = (("game_id", ASCENDING), ("character_id", ASCENDING))
+
+    async def for_game(
+        self, game_id: str, character_id: str | None = None
+    ) -> list[CharacterKnowledge]:
+        query: dict[str, Any] = {"game_id": game_id}
+        if character_id:
+            query["character_id"] = character_id
+        return await self._read(query, sort=[("created_at_step", ASCENDING)])
+
+
+class MongoThreadRepository(_MongoScopedRepository):
+    name = "mongo"
+    collection_name = THREADS
+    model = NarrativeThread
+    indexes = (("game_id", ASCENDING), ("status", ASCENDING))
+
+    async def for_game(self, game_id: str) -> list[NarrativeThread]:
+        records = await self._read({"game_id": game_id})
+        records.sort(key=lambda thread: (thread.status.value, -thread.priority))
+        return records
+
+
+class MongoTraceRepository(_MongoScopedRepository):
+    name = "mongo"
+    collection_name = TRACES
+    model = NarrativeTrace
+    indexes = (("game_id", ASCENDING), ("batch_id", ASCENDING))
+
+    async def for_game(self, game_id: str, limit: int = 200) -> list[NarrativeTrace]:
+        # Newest first, then reversed -- a long save must lose its oldest traces, never
+        # the recent ones a regression report is about.
+        records = await self._read(
+            {"game_id": game_id}, sort=[("created_at", DESCENDING)], limit=limit
+        )
+        records.reverse()
+        return records
+
+    async def mark_delivered(self, game_id: str, batch_id: str, step_index: int) -> int:
+        result = await self._col.update_many(
+            {"game_id": game_id, "batch_id": batch_id},
+            {"$set": {"delivered": True, "step_index": step_index}},
+        )
+        return result.modified_count

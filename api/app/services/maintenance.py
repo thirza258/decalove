@@ -41,6 +41,9 @@ class SweepReport(BaseModel):
     deleted: int = 0
     memories_removed: int = 0
     chronicle_removed: int = 0
+    knowledge_removed: int = 0
+    threads_removed: int = 0
+    traces_removed: int = 0
     skipped: int = 0
     game_ids: list[str] = Field(default_factory=list)
 
@@ -65,10 +68,19 @@ class MaintenanceService:
         interval_s: float = 3600.0,
         batch_limit: int = 200,
         enabled: bool = True,
+        knowledge=None,
+        threads=None,
+        traces=None,
     ) -> None:
         self.games = games
         self.memories = memories
         self.chronicle = chronicle
+        #: Secondary intelligence stores. All are per-game read models and must be
+        #: purged with the save for the same reason memories are (§13): nothing else
+        #: knows the game id afterwards.
+        self.knowledge = knowledge
+        self.threads = threads
+        self.traces = traces
         self.generation = generation
         self.game_service = game_service
         self.ttl = timedelta(days=ttl_days)
@@ -116,6 +128,14 @@ class MaintenanceService:
 
                 report.memories_removed += await self.memories.purge_game(game_id)
                 report.chronicle_removed += await self.chronicle.purge_game(game_id)
+                for attribute, counter in (
+                    ("knowledge", "knowledge_removed"),
+                    ("threads", "threads_removed"),
+                    ("traces", "traces_removed"),
+                ):
+                    repository = getattr(self, attribute, None)
+                    if repository is not None:
+                        setattr(report, counter, await repository.purge_game(game_id))
                 report.deleted += 1
                 report.game_ids.append(game_id)
 

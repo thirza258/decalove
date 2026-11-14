@@ -280,3 +280,193 @@ class TestImageProvider:
         )
         ref = await service.ensure(AssetSpec(kind="background", cache_key="bg_x", prompt="p"), "w")
         assert ref.status is AssetStatus.unavailable
+
+
+class TestUsageCapture:
+    async def test_provider_reported_tokens_reach_the_caller(self, monkeypatch):
+        from app.llm.base import take_usage
+
+        def handler(request, n):
+            return httpx.Response(200, json={
+                "choices": [{"message": {"content": json.dumps({"ok": True})}}],
+                "usage": {"prompt_tokens": 120, "completion_tokens": 80, "total_tokens": 200},
+            })
+
+        wire(monkeypatch, handler)
+        await chat().complete_json(
+            system="s", user="u", schema_name="n",
+            schema={"type": "object", "properties": {}, "required": [],
+                    "additionalProperties": False},
+        )
+        assert take_usage() == {
+            "prompt_tokens": 120, "completion_tokens": 80, "total_tokens": 200,
+        }
+
+    async def test_usage_accumulates_across_the_json_repair_round_trip(self, monkeypatch):
+        from app.llm.base import take_usage
+
+        def handler(request, n):
+            usage = {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+            if n == 1:
+                return httpx.Response(200, json={
+                    "choices": [{"message": {"content": "not json at all"}}], "usage": usage,
+                })
+            return httpx.Response(200, json={
+                "choices": [{"message": {"content": json.dumps({"ok": True})}}], "usage": usage,
+            })
+
+        wire(monkeypatch, handler)
+        assert await chat().complete_json(
+            system="s", user="u", schema_name="n",
+            schema={"type": "object", "properties": {}, "required": [],
+                    "additionalProperties": False},
+        ) == {"ok": True}
+        assert take_usage()["total_tokens"] == 30
+
+
+class TestFreeModelRouting:
+    async def test_a_model_with_no_strict_schema_route_is_retried_without_routing(
+        self, monkeypatch
+    ):
+        bodies = []
+
+        def handler(request, n):
+            body = json.loads(request.content)
+            bodies.append(body)
+            if "provider" in body:
+                return httpx.Response(404, json={"error": {
+                    "message": "No endpoints found that can handle the requested parameters.",
+                }})
+            return completion({"ok": True})
+
+        wire(monkeypatch, handler)
+        schema = {"type": "object", "properties": {}, "required": [],
+                  "additionalProperties": False}
+        assert await chat().complete_json(
+            system="s", user="u", schema_name="n", schema=schema,
+        ) == {"ok": True}
+
+        assert bodies[0]["provider"] == {"require_parameters": True}
+        assert "provider" not in bodies[1], "the relaxed retry kept the strict route"
+        # The schema is still demanded; only the routing requirement was relaxed.
+        assert bodies[1]["response_format"]["json_schema"]["strict"] is True
+
+    async def test_an_unrelated_404_is_not_retried(self, monkeypatch):
+        calls = []
+
+        def handler(request, n):
+            calls.append(n)
+            return httpx.Response(404, json={"error": {"message": "model not found"}})
+
+        wire(monkeypatch, handler)
+        schema = {"type": "object", "properties": {}, "required": [],
+                  "additionalProperties": False}
+        with pytest.raises(LLMError):
+            await chat().complete_json(system="s", user="u", schema_name="n", schema=schema)
+        assert len(calls) == 1
+
+
+class TestFreeModelDiscovery:
+    @pytest.fixture(autouse=True)
+    def clean_cache(self):
+        from app.llm.openrouter import reset_free_model_cache
+
+        reset_free_model_cache()
+        yield
+        reset_free_model_cache()
+
+    async def test_it_keeps_only_free_text_models(self, monkeypatch):
+        from app.llm.openrouter import discover_free_models
+
+        payload = {"data": [
+            {"id": "free/one:free",
+             "pricing": {"prompt": "0", "completion": "0"},
+             "architecture": {"output_modalities": ["text"]}},
+            {"id": "free/zero-priced",
+             "pricing": {"prompt": "0", "completion": "0"},
+             "architecture": {"modality": "text->text"}},
+            {"id": "paid/two",
+             "pricing": {"prompt": "0.000001", "completion": "0.000002"},
+             "architecture": {"output_modalities": ["text"]}},
+            {"id": "free/image",
+             "pricing": {"prompt": "0", "completion": "0"},
+             "architecture": {"output_modalities": ["image"]}},
+            {"id": "ended:free",
+             "pricing": {"prompt": "0", "completion": "0"}},
+        ]}
+        wire(monkeypatch, lambda request, n: httpx.Response(200, json=payload))
+
+        models = await discover_free_models(api_key="sk-test")
+        assert set(models) == {"free/one:free", "free/zero-priced", "ended:free"}
+
+    async def test_the_catalogue_is_cached_and_fail_open(self, monkeypatch):
+        from app.llm.openrouter import discover_free_models, reset_free_model_cache
+
+        calls = []
+        payload = {"data": [{"id": "free/one:free",
+                             "pricing": {"prompt": "0", "completion": "0"}}]}
+
+        def handler(request, n):
+            calls.append(n)
+            return httpx.Response(200, json=payload)
+
+        wire(monkeypatch, handler)
+        first = await discover_free_models(api_key="sk-test")
+        second = await discover_free_models(api_key="sk-test")
+        assert first == second == ["free/one:free"]
+        assert len(calls) == 1, "an hour-long cache should serve the second build"
+
+        # A later failure inside the TTL still serves the last good catalogue.
+        wire(monkeypatch, lambda request, n: httpx.Response(503, json={}))
+        assert await discover_free_models(api_key="sk-test") == ["free/one:free"]
+
+        # After the cache is cleared, failure is empty rather than stale forever.
+        reset_free_model_cache()
+        assert await discover_free_models(api_key="sk-test") == []
+
+    def test_shuffle_is_a_permutation(self):
+        from app.llm.openrouter import shuffled_models
+
+        models = ["a", "b", "c", "d", "e"]
+        shuffled = shuffled_models(models, rng=__import__("random").Random(7))
+        assert sorted(shuffled) == models
+        assert shuffled != models
+        assert models == ["a", "b", "c", "d", "e"], "the caller's list was mutated"
+
+    async def test_schema_capable_models_rank_first_and_non_chat_models_are_dropped(
+        self, monkeypatch
+    ):
+        from app.llm.openrouter import discover_free_models
+
+        free = {"pricing": {"prompt": "0", "completion": "0"}}
+        payload = {"data": [
+            {"id": "strict/one:free", **free, "supported_parameters": ["structured_outputs"]},
+            {"id": "strict/two:free", **free, "supported_parameters": ["response_format"]},
+            {"id": "relaxed/one:free", **free, "supported_parameters": ["temperature"]},
+            {"id": "relaxed/two:free", **free, "supported_parameters": []},
+            {"id": "audio/tts:free", **free, "architecture": {"output_modalities": ["audio"]}},
+            {"id": "google/lyria-3-clip-preview", **free},
+        ]}
+        wire(monkeypatch, lambda request, n: httpx.Response(200, json=payload))
+
+        models = await discover_free_models(api_key="sk-test")
+        assert set(models) == {
+            "strict/one:free", "strict/two:free", "relaxed/one:free", "relaxed/two:free",
+        }
+        assert set(models[:2]) == {"strict/one:free", "strict/two:free"}
+
+    async def test_hand_verified_models_lead_the_shuffle(self, monkeypatch):
+        from app.llm.openrouter import VERIFIED_FREE_MODELS, discover_free_models
+
+        free = {"pricing": {"prompt": "0", "completion": "0"},
+                "supported_parameters": ["structured_outputs"]}
+        payload = {"data": [
+            {"id": "new/strict-a:free", **free},
+            {"id": "new/strict-b:free", **free},
+            {"id": VERIFIED_FREE_MODELS[0], **free},
+            {"id": VERIFIED_FREE_MODELS[1], **free},
+        ]}
+        wire(monkeypatch, lambda request, n: httpx.Response(200, json=payload))
+        models = await discover_free_models(api_key="sk-test")
+        assert set(models[:2]) == {VERIFIED_FREE_MODELS[0], VERIFIED_FREE_MODELS[1]}
+        assert set(models[2:]) == {"new/strict-a:free", "new/strict-b:free"}
