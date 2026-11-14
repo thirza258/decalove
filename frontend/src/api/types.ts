@@ -78,6 +78,8 @@ export interface StoryStep {
   next_choices: Choice[];
   /** What this beat changed, keyed by character id. Applied by the engine on delivery. */
   relationship_changes?: Record<string, RelationshipDelta> | null;
+  /** How each present character is feeling after this beat, keyed by character id. */
+  emotion?: Record<string, string> | null;
   visual?: VisualSpec | null;
   background_asset?: AssetRef | null;
   character_asset?: AssetRef | null;
@@ -138,10 +140,22 @@ export interface WorldOut {
   web_mode?: boolean;
 }
 
+/** The engine's scene clock and place, mirrored for the HUD. */
+export interface WorldContext {
+  location: string;
+  time_of_day: string;
+  weekday: string;
+  day: number;
+  weather: string;
+  arc: string;
+  present_characters: string[];
+}
+
 export interface GameStateOut {
   pending?: { batch_id: string; status: string; error?: string | null } | null;
   game_id: string;
   world_id: string;
+  world?: WorldContext;
   characters?: Record<string, CharacterStanding>;
   current_step_index: number;
   queue_depth: number;

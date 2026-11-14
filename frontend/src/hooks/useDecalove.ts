@@ -107,8 +107,12 @@ export function useDecalove(): Decalove {
     const token = epoch.current;
     let live = true;
     void api.gameState(gameId).then((synced) => {
-      if (live && token === epoch.current && synced?.characters) {
-        dispatch({ type: "state/synced", characters: synced.characters });
+      if (live && token === epoch.current && synced) {
+        dispatch({
+          type: "state/synced",
+          characters: synced.characters,
+          world: synced.world,
+        });
       }
     });
     return () => { live = false; };
@@ -142,7 +146,7 @@ export function useDecalove(): Decalove {
       }
       retryOperation.current = null;
       // The authored opening ran locally; the engine's own numbers arrive with the sync.
-      if (synced.characters) dispatch({ type: "state/synced", characters: synced.characters });
+      dispatch({ type: "state/synced", characters: synced.characters, world: synced.world });
       dispatch({ type: "opening/handoff" });
     });
   }, [runSubmission, showError]);
@@ -180,8 +184,10 @@ export function useDecalove(): Decalove {
         return;
       }
       retryOperation.current = null;
-      dispatch({ type: "game/started", gameId: game.game_id });
-      if (game.characters) dispatch({ type: "state/synced", characters: game.characters });
+      dispatch({ type: "game/started", gameId: game.game_id, world: game.world });
+      if (game.characters) {
+        dispatch({ type: "state/synced", characters: game.characters, world: game.world });
+      }
     });
   }, [runSubmission]);
 
@@ -203,7 +209,7 @@ export function useDecalove(): Decalove {
           showError("submission", "Could not send your choice. Please try again.");
           return;
         }
-        if (synced.characters) dispatch({ type: "state/synced", characters: synced.characters });
+        dispatch({ type: "state/synced", characters: synced.characters, world: synced.world });
       }
       const text = kind === "choice" ? current.next_choices.find((choice) => choice.id === value)?.text ?? value : value;
       const accepted = kind === "choice" && source !== "opening"
@@ -215,7 +221,7 @@ export function useDecalove(): Decalove {
         return;
       }
       retryOperation.current = null;
-      dispatch({ type: "decision/submitted" });
+      dispatch({ type: "decision/submitted", text });
       if (source === "opening") dispatch({ type: "opening/start", steps: OPENING_AFTER_CHOICE });
     });
   }, [runSubmission, showError]);

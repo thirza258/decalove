@@ -10,6 +10,8 @@ import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { ChoiceMenu } from "./components/ChoiceMenu";
 import { DialogueBox } from "./components/DialogueBox";
 import { FreeTextInput } from "./components/FreeTextInput";
+import { SceneHud } from "./components/SceneHud";
+import { StoryLog } from "./components/StoryLog";
 import { LandingPage } from "./components/LandingPage";
 import { LegalPage } from "./components/LegalPage";
 import {
@@ -84,6 +86,7 @@ export default function App() {
 function GamePlayer({ onHome }: { onHome: () => void }) {
   const game = useDecalove();
   const { state } = game;
+  const [logOpen, setLogOpen] = useState(false);
 
   // What the box is currently saying. An ambient line displaces the beat's own text
   // while the engine is still writing; it is italic and never a spinner (PRD §11).
@@ -111,13 +114,54 @@ function GamePlayer({ onHome }: { onHome: () => void }) {
   // the behaviour every visual novel has, and it is why the typewriter is lifted out
   // of the text box.
   const onStageClick = () => {
-    if (state.deciding || state.typing || state.error) return;
+    if (logOpen || state.deciding || state.typing || state.error) return;
     if (!typed.done) {
       typed.complete();
       return;
     }
     game.advance();
   };
+
+  // Keyboard parity with the click: Space/Enter advance (or complete the line), L opens
+  // the log, Escape closes it. Never when an input or a decision menu owns the keyboard.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const typing =
+        Boolean(target) &&
+        (/^(INPUT|TEXTAREA|SELECT)$/.test(target!.tagName) || Boolean(target!.isContentEditable));
+      const onControl =
+        Boolean(target) &&
+        (/^(BUTTON|A|SUMMARY)$/.test(target!.tagName) || Boolean(target!.isContentEditable));
+      if (event.key === "Escape" && logOpen) {
+        event.preventDefault();
+        setLogOpen(false);
+        return;
+      }
+      if (typing || event.metaKey || event.ctrlKey || event.altKey) return;
+      // Space/Enter belong to a focused control; advancing the story instead would
+      // make the log, fullscreen and relationship buttons unusable by keyboard.
+      if ((event.key === " " || event.key === "Enter") && onControl) return;
+      if (state.phase !== "story") return;
+      if (event.key.toLowerCase() === "l") {
+        event.preventDefault();
+        setLogOpen((open) => !open);
+        return;
+      }
+      if (
+        (event.key === " " || event.key === "Enter") &&
+        !logOpen &&
+        !state.deciding &&
+        !state.typing &&
+        !state.busy
+      ) {
+        event.preventDefault();
+        onStageClick();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
 
   if (state.phase === "boot") {
     return <StageFrame><Booting /></StageFrame>;
@@ -182,12 +226,24 @@ function GamePlayer({ onHome }: { onHome: () => void }) {
           speaker={line.speaker}
           speakerColor={line.color}
           text={typed.shown}
+          fullText={line.text}
+          revealed={typed.done}
+          emotion={step?.dialogue?.emotion}
           muted={line.muted}
           showAdvanceHint={typed.done && !state.deciding && !state.typing && !state.busy}
         />
       </div>
 
-      {state.deciding && !state.typing && !state.busy && !state.error && state.current && (
+      <SceneHud
+        scene={state.scene}
+        world={state.world}
+        step={state.current}
+        waiting={state.waiting}
+        deciding={state.deciding}
+        onOpenLog={() => setLogOpen(true)}
+      />
+
+      {state.deciding && !state.typing && !state.busy && !state.error && !logOpen && state.current && (
         <ChoiceMenu
           choices={state.current.next_choices}
           onPick={game.chooseOption}
@@ -207,6 +263,14 @@ function GamePlayer({ onHome }: { onHome: () => void }) {
       {state.error && (
         <GenerationErrorModal message={state.error.message} onRetry={game.retry} onBack={game.backToMenu} />
       )}
+
+      <StoryLog
+        open={logOpen}
+        onClose={() => setLogOpen(false)}
+        history={state.history}
+        world={state.world}
+        playerName={state.profile.name}
+      />
     </StageFrame>
   );
 }

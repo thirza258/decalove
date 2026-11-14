@@ -10,7 +10,55 @@
  */
 
 import { AMBIENT_LIMIT, MAX_OFFLINE_STREAK, MAX_PENDING_POLLS } from "../config";
-import type { CharacterStanding, RelationshipDelta, Route, StepsBatchOut, StoryStep, WorldOut } from "../api/types";
+import type {
+  CharacterStanding,
+  RelationshipDelta,
+  Route,
+  StepsBatchOut,
+  StoryStep,
+  WorldContext,
+  WorldOut,
+} from "../api/types";
+
+/** One line in the player-facing story log. */
+export interface LogEntry {
+  id: string;
+  kind: "dialogue" | "narration" | "player";
+  /** Character id, or the player's chosen name for a player line. */
+  speaker: string | null;
+  text: string;
+  index: number;
+}
+
+export const HISTORY_LIMIT = 80;
+
+function logged(step: StoryStep): LogEntry | null {
+  if (step.dialogue?.text?.trim()) {
+    return {
+      id: step.step_id,
+      kind: "dialogue",
+      speaker: step.dialogue.speaker,
+      text: step.dialogue.text,
+      index: step.index,
+    };
+  }
+  if (step.narration?.trim()) {
+    return {
+      id: step.step_id,
+      kind: "narration",
+      speaker: null,
+      text: step.narration,
+      index: step.index,
+    };
+  }
+  return null;
+}
+
+function append(history: LogEntry[], entry: LogEntry | null): LogEntry[] {
+  if (!entry) return history;
+  if (history.some((existing) => existing.id === entry.id)) return history;
+  return [...history, entry].slice(-HISTORY_LIMIT);
+}
 
 export type Phase =
   | "boot"
@@ -35,6 +83,10 @@ export interface State {
   error: { kind: "generation" | "connection" | "submission"; message: string } | null;
   phase: Phase;
   world: WorldOut | null;
+  /** The engine's clock, place, arc and present cast, refreshed once per turn. */
+  scene: WorldContext | null;
+  /** Delivered lines only, oldest first. Never buffered beats the player has not read. */
+  history: LogEntry[];
   gameId: string | null;
   profile: Profile;
 
@@ -81,6 +133,8 @@ export const initialState: State = {
   error: null,
   phase: "boot",
   world: null,
+  scene: null,
+  history: [],
   gameId: null,
   profile: { name: "You", pronouns: "they/them", tone: "warm", route: "single" },
   source: "opening",
@@ -109,8 +163,12 @@ export type Action =
   | { type: "boot/failed"; message: string }
   | { type: "menu/new" }
   | { type: "setup/submit"; profile: Profile }
-  | { type: "game/started"; gameId: string }
-  | { type: "state/synced"; characters: Record<string, CharacterStanding> }
+  | { type: "game/started"; gameId: string; world?: WorldContext }
+  | {
+      type: "state/synced";
+      characters?: Record<string, CharacterStanding>;
+      world?: WorldContext;
+    }
   | { type: "intro/done" }
   | { type: "opening/start"; steps: StoryStep[] }
   | { type: "opening/handoff" }
@@ -120,7 +178,7 @@ export type Action =
   | { type: "batch/append"; body: StepsBatchOut }
   | { type: "batch/failed"; message: string }
   | { type: "decision/typing"; open: boolean }
-  | { type: "decision/submitted" }
+  | { type: "decision/submitted"; text?: string }
   | { type: "offline"; message: string }
   | { type: "expired" };
 
@@ -151,9 +209,15 @@ function isBlocking(step: StoryStep | null): boolean {
 function applyStanding(
   standing: Record<string, CharacterStanding>,
   changes: Record<string, RelationshipDelta>,
+  emotions: Record<string, string> = {},
 ): { standing: Record<string, CharacterStanding>; moved: Record<string, RelationshipDelta> } {
   const next = { ...standing };
   const moved: Record<string, RelationshipDelta> = {};
+  // A mood can change without a relationship delta; show it either way.
+  for (const [id, mood] of Object.entries(emotions)) {
+    const known = next[id];
+    if (known) next[id] = { ...known, current_emotion: mood };
+  }
   for (const [id, delta] of Object.entries(changes)) {
     const known = next[id];
     if (!known) continue;
@@ -179,7 +243,7 @@ function present(state: State, step: StoryStep, rest: StoryStep[]): State {
   // move anyone twice.
   const fresh = step.step_id !== state.current?.step_id;
   const { standing, moved } = fresh
-    ? applyStanding(state.standing, step.relationship_changes ?? {})
+    ? applyStanding(state.standing, step.relationship_changes ?? {}, step.emotion ?? {})
     : { standing: state.standing, moved: {} };
   const changed = Object.keys(moved).length > 0;
   return {
@@ -187,6 +251,7 @@ function present(state: State, step: StoryStep, rest: StoryStep[]): State {
     standing,
     standingDelta: changed ? moved : fresh ? {} : state.standingDelta,
     standingSeq: changed ? state.standingSeq + 1 : state.standingSeq,
+    history: fresh ? append(state.history, logged(step)) : state.history,
     current: step,
     buffer: rest,
     deciding: isBlocking(step),
@@ -222,11 +287,22 @@ export function reduce(state: State, action: Action): State {
       return { ...state, profile: action.profile, busy: true };
 
     case "game/started":
-      return { ...state, gameId: action.gameId, phase: "intro", busy: false };
+      return {
+        ...state,
+        gameId: action.gameId,
+        scene: action.world ?? state.scene,
+        phase: "intro",
+        busy: false,
+      };
 
     case "state/synced":
-      // The engine's own numbers, which outrank anything mirrored here.
-      return { ...state, standing: { ...action.characters } };
+      // The engine's own numbers, which outrank anything mirrored here. A sync may
+      // carry characters, scene context or both; each replaces only its own slice.
+      return {
+        ...state,
+        standing: action.characters ? { ...action.characters } : state.standing,
+        scene: action.world ?? state.scene,
+      };
 
     case "intro/done":
       return { ...state, phase: "story", source: "opening" };
@@ -345,7 +421,25 @@ export function reduce(state: State, action: Action): State {
     // in a 20-step batch), immediately present the next step so the story continues
     // seamlessly while Celery / background worker generates the next batch.
     case "decision/submitted": {
-      const base = { ...state, busy: false, waiting: true, deciding: false, typing: false, pendingStreak: 0 };
+      const said = action.text?.trim();
+      const saidEntry: LogEntry | null = said
+        ? {
+            id: `player:${state.current?.step_id ?? "turn"}:${state.history.length}`,
+            kind: "player",
+            speaker: state.profile.name,
+            text: said,
+            index: state.current?.index ?? -1,
+          }
+        : null;
+      const base = {
+        ...state,
+        history: append(state.history, saidEntry),
+        busy: false,
+        waiting: true,
+        deciding: false,
+        typing: false,
+        pendingStreak: 0,
+      };
       if (base.buffer.length > 0) {
         const [next, ...rest] = base.buffer;
         return present(base, next, rest);

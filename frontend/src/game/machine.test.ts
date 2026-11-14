@@ -297,3 +297,70 @@ describe("where the player stands with everyone", () => {
     expect(corrected.standing.aiko.relationship.affection).toBe(51);
   });
 });
+
+describe("the story log", () => {
+  it("keeps delivered dialogue and narration, and never logs the same beat twice", () => {
+    const first = step({
+      step_id: "s1", index: 1,
+      dialogue: { speaker: "aiko", text: "You came back." },
+      narration: "The door clicks shut.",
+    });
+    let state = reduce(playing, { type: "batch/received", body: batch({ steps: [first] }) });
+    // A re-offered decision point is the same step id and must not duplicate the line.
+    state = reduce(state, { type: "batch/received", body: batch({
+      status: "awaiting_player", steps: [step({ ...first, type: "choice" })],
+    }) });
+
+    expect(state.history).toHaveLength(1);
+    expect(state.history[0]).toMatchObject({
+      kind: "dialogue", speaker: "aiko", text: "You came back.",
+    });
+  });
+
+  it("records what the player actually said, under their own name", () => {
+    const state = reduce({ ...playing, profile: { ...playing.profile, name: "Kai" } }, {
+      type: "decision/submitted", text: "I apologise to Aiko.",
+    });
+    expect(state.history.at(-1)).toMatchObject({
+      kind: "player", speaker: "Kai", text: "I apologise to Aiko.",
+    });
+  });
+
+  it("does not add an empty player line", () => {
+    const state = reduce(playing, { type: "decision/submitted", text: "   " });
+    expect(state.history).toEqual([]);
+  });
+
+  it("takes the engine's scene snapshot and keeps it until the next sync", () => {
+    const scene = {
+      location: "library", time_of_day: "afternoon", weekday: "Tuesday",
+      day: 3, weather: "clear", arc: "first_weeks", present_characters: ["aiko"],
+    };
+    const synced = reduce(playing, { type: "state/synced", world: scene });
+    expect(synced.scene).toEqual(scene);
+    const later = reduce(synced, { type: "state/synced", characters: {} });
+    expect(later.scene).toEqual(scene);
+  });
+
+  it("starts a new story with an empty log", () => {
+    const logged = reduce(playing, { type: "batch/received", body: batch({ steps: [step({ step_id: "s1" })] }) });
+    expect(logged.history).toHaveLength(1);
+    expect(reduce(logged, { type: "menu/new" }).history).toEqual([]);
+  });
+});
+
+describe("mood without a relationship move", () => {
+  it("updates how someone feels without pretending the relationship changed", () => {
+    const cast = {
+      aiko: { id: "aiko", name: "Aiko", relationship: { affection: 40 }, current_emotion: "neutral", met: true },
+    };
+    const synced = reduce(playing, { type: "state/synced", characters: cast });
+    const state = reduce(synced, { type: "batch/received", body: batch({ steps: [
+      step({ step_id: "mood", emotion: { aiko: "angry" } }),
+    ] }) });
+
+    expect(state.standing.aiko.current_emotion).toBe("angry");
+    expect(state.standingDelta).toEqual({});
+    expect(state.standing.aiko.relationship.affection).toBe(40);
+  });
+});
