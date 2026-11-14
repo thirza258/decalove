@@ -67,7 +67,7 @@ class Settings(BaseSettings):
     OPENROUTER_DISCOVER_FREE_MODELS: bool = True
     OPENROUTER_MODEL_DISCOVERY_TIMEOUT_S: float = 5.0
     #: Total alternates after the primary (configured ones first, then shuffled live).
-    OPENROUTER_FALLBACK_MODEL_LIMIT: int = 3
+    OPENROUTER_FALLBACK_MODEL_LIMIT: int = 2
     #: Free models write a 20-step run in roughly a minute, so the per-attempt ceiling
     #: and the provider HTTP timeout are sized for that rather than for a paid model.
     WEB_AI_ATTEMPT_TIMEOUT_S: float = 120.0
@@ -90,9 +90,9 @@ class Settings(BaseSettings):
     MAX_CHOICES: int = 5
     TEMPERATURE: float = 0.85
     MAX_OUTPUT_TOKENS: int = 12000
-    #: Free models take ~70s for a 20-step run. With three alternates this leaves each
-    #: attempt a real chance rather than timing out all of them.
-    GENERATION_TIMEOUT_S: float = 420.0
+    #: Free models take ~70-100s for a 20-step run. With two alternates this leaves each
+    #: attempt ~118s rather than timing out all of them.
+    GENERATION_TIMEOUT_S: float = 360.0
     #: PRD §24 Rule 4 — the most any single step may move a relationship axis.
     MAX_RELATIONSHIP_DELTA: int = 5
     #: Upper bound for long-polling GET /steps/next.

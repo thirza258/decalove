@@ -20,11 +20,13 @@ from app.config import settings
 STORY_QUEUE = "story"
 IMAGE_QUEUE = "images"
 
-#: Per-queue ceilings, because the two workloads have nothing in common. Anything past the
-#: story limit is a hung connection rather than a slow model, and the player is better
-#: served by the scripted fallback than by a worker slot held open.
-STORY_TIME_LIMIT_S = 180
-STORY_SOFT_TIME_LIMIT_S = 150
+#: Per-queue ceilings, because the two workloads have nothing in common. The story limit
+#: has to cover the worker-side intent refinement (60s) plus GENERATION_TIMEOUT_S (360s)
+#: and a little overhead: a free model writing 20 steps takes 70-100s, and the failover
+#: chain needs room to try its alternates. Past this it is a hung connection rather
+#: than a slow model.
+STORY_TIME_LIMIT_S = 480
+STORY_SOFT_TIME_LIMIT_S = 450
 
 #: Generous by comparison: the ceiling has to cover a first-run SDXL weight load (~6.5 GB
 #: onto the GPU) on top of the inference itself.
